@@ -3,6 +3,8 @@
 from pathlib import Path
 from typing import Literal
 
+import re
+
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 from pydantic_settings import BaseSettings
@@ -167,12 +169,35 @@ class WebToolsConfig(Base):
     search: WebSearchConfig = Field(default_factory=WebSearchConfig)
 
 
+def _parse_duration(value: str | int) -> int:
+    """Parse a duration string to minutes. Supports: 120s, 120m, 2h. Bare int = minutes."""
+    if isinstance(value, int):
+        return value
+    value = value.strip()
+    if value.isdigit():
+        return int(value)
+    m = re.fullmatch(r"(\d+)\s*(s|m|h)", value, re.IGNORECASE)
+    if not m:
+        raise ValueError(f"Invalid duration '{value}'. Use e.g. 120s, 120m, 2h")
+    num, unit = int(m.group(1)), m.group(2).lower()
+    if unit == "s":
+        return max(1, num // 60)
+    if unit == "m":
+        return num
+    return num * 60  # h
+
+
 class BashToolConfig(Base):
     """Shell bash tool configuration."""
 
     enable: bool = True
     timeout: int = 60
     path_append: str = ""
+    bg_ttl: str | int = "2h"  # TTL for completed bg task metadata (e.g. "120s", "120m", "2h")
+    bg_max_entries: int = 128  # max completed bg task entries to keep
+
+    def bg_ttl_minutes(self) -> int:
+        return _parse_duration(self.bg_ttl)
 
 class MCPServerConfig(Base):
     """MCP server connection configuration (stdio or HTTP)."""

@@ -132,7 +132,10 @@ class SubagentManager:
                         path_append=self.bash_config.path_append,
                     )
                 )
-                tools.register(ShellBgTool())
+                tools.register(ShellBgTool(
+                    bg_ttl_minutes=self.bash_config.bg_ttl_minutes(),
+                    bg_max_entries=self.bash_config.bg_max_entries,
+                ))
             if self.web_config.enable:
                 tools.register(
                     WebSearchTool(config=self.web_config.search, proxy=self.web_config.proxy)

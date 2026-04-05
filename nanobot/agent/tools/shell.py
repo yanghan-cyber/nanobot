@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -88,10 +89,79 @@ def _resolve_shell() -> str:
 _bg_processes: dict[str, asyncio.subprocess.Process] = {}
 _bg_meta: dict[str, dict] = {}
 _bg_file_handles: dict[str, Any] = {}
+_last_cleanup: float = 0.0  # monotonic timestamp of last cleanup run
+_CLEANUP_INTERVAL = 300.0  # minimum seconds between cleanup sweeps (5 min)
 
 
 def _bg_output_path(bg_id: str) -> Path:
     return ensure_dir(get_data_dir() / "tool-output" / "shell") / f"{bg_id}_output.log"
+
+
+def _cleanup_bg_meta(ttl_minutes: int = 120, max_entries: int = 128) -> None:
+    """Remove expired or excess completed bg task metadata and their log files.
+
+    Rules:
+    1. Running tasks are never removed.
+    2. Completed/failed/killed tasks older than ``ttl_minutes`` are evicted.
+    3. If still over ``max_entries`` after TTL eviction, remove the oldest.
+    """
+    global _last_cleanup
+
+    now_monotonic = time.monotonic()
+    if now_monotonic - _last_cleanup < _CLEANUP_INTERVAL:
+        return
+
+    if not _bg_meta:
+        _last_cleanup = now_monotonic
+        return
+
+    now = datetime.now()
+    to_remove: list[str] = []
+
+    # Phase 1: TTL eviction
+    for bg_id, m in _bg_meta.items():
+        if m.get("status") == "running":
+            continue
+        end_time_str = m.get("end_time")
+        if not end_time_str:
+            continue
+        try:
+            end_time = datetime.fromisoformat(end_time_str)
+            if (now - end_time).total_seconds() > ttl_minutes * 60:
+                to_remove.append(bg_id)
+        except (ValueError, TypeError):
+            pass
+
+    for bg_id in to_remove:
+        _remove_bg_entry(bg_id)
+
+    # Phase 2: cap eviction — if still over max, remove oldest first
+    completed = [
+        (bg_id, m.get("end_time", ""))
+        for bg_id, m in _bg_meta.items()
+        if m.get("status") != "running"
+    ]
+    excess = len(completed) - max_entries
+    if excess > 0:
+        completed.sort(key=lambda x: x[1])
+        for bg_id, _ in completed[:excess]:
+            _remove_bg_entry(bg_id)
+
+    _last_cleanup = now_monotonic
+
+
+def _remove_bg_entry(bg_id: str) -> None:
+    """Remove a bg task's metadata and its output log file."""
+    meta = _bg_meta.pop(bg_id, None)
+    if meta:
+        try:
+            Path(meta["output_file"]).unlink(missing_ok=True)
+        except Exception:
+            pass
+    _bg_processes.pop(bg_id, None)
+    fh = _bg_file_handles.pop(bg_id, None)
+    if fh:
+        fh.close()
 
 
 async def _monitor_process(bg_id: str) -> None:
@@ -425,6 +495,10 @@ class ShellBgTool(Tool):
 
     _DEFAULT_TAIL = 50
 
+    def __init__(self, bg_ttl_minutes: int = 120, bg_max_entries: int = 128):
+        self._ttl_minutes = bg_ttl_minutes
+        self._max_entries = bg_max_entries
+
     @property
     def name(self) -> str:
         return "shell_bg"
@@ -448,6 +522,7 @@ class ShellBgTool(Tool):
         bash_bg_id: str = "",
         **kwargs: Any,
     ) -> str:
+        _cleanup_bg_meta(self._ttl_minutes, self._max_entries)
         if action == "list":
             return self._list()
         elif action == "output":
