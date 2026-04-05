@@ -78,9 +78,12 @@ def save_config(config: Config, config_path: Path | None = None) -> None:
 
 def _migrate_config(data: dict) -> dict:
     """Migrate old config formats to current."""
-    # Move tools.exec.restrictToWorkspace → tools.restrictToWorkspace
     tools = data.get("tools", {})
-    exec_cfg = tools.get("exec", {})
+    # Rename tools.exec → tools.bash (legacy config support)
+    if "exec" in tools and "bash" not in tools:
+        tools["bash"] = tools.pop("exec")
+    # Move tools.bash.restrictToWorkspace → tools.restrictToWorkspace
+    exec_cfg = tools.get("bash", {})
     if "restrictToWorkspace" in exec_cfg and "restrictToWorkspace" not in tools:
         tools["restrictToWorkspace"] = exec_cfg.pop("restrictToWorkspace")
     return data

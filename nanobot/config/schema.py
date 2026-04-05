@@ -167,8 +167,8 @@ class WebToolsConfig(Base):
     search: WebSearchConfig = Field(default_factory=WebSearchConfig)
 
 
-class ExecToolConfig(Base):
-    """Shell exec tool configuration."""
+class BashToolConfig(Base):
+    """Shell bash tool configuration."""
 
     enable: bool = True
     timeout: int = 60
@@ -190,7 +190,7 @@ class ToolsConfig(Base):
     """Tools configuration."""
 
     web: WebToolsConfig = Field(default_factory=WebToolsConfig)
-    exec: ExecToolConfig = Field(default_factory=ExecToolConfig)
+    bash: BashToolConfig = Field(default_factory=BashToolConfig)
     restrict_to_workspace: bool = False  # If true, restrict all tool access to workspace directory
     mcp_servers: dict[str, MCPServerConfig] = Field(default_factory=dict)
     ssrf_whitelist: list[str] = Field(default_factory=list)  # CIDR ranges to exempt from SSRF blocking (e.g. ["100.64.0.0/10"] for Tailscale)
