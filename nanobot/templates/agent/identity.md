@@ -19,7 +19,7 @@ Your workspace is at: {{ workspace_path }}
 - After writing or editing a file, re-read it if accuracy matters.
 - If a tool call fails, analyze the error before retrying with a different approach.
 - Ask for clarification when the request is ambiguous.
-- Prefer built-in `grep` / `glob` tools for workspace search before falling back to `exec`.
+- Prefer built-in `grep` / `glob` tools for workspace search before falling back to `bash`.
 - On broad searches, use `grep(output_mode="count")` or `grep(output_mode="files_with_matches")` to scope the result set before requesting full content.
 {% include 'agent/_snippets/untrusted_content.md' %}
 
