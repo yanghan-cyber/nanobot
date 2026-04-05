@@ -822,7 +822,7 @@ def _configure_channels(config: Config) -> None:
 _SETTINGS_SECTIONS: dict[str, tuple[str, str, set[str] | None]] = {
     "Agent Settings": ("Agent Defaults", "Configure default model, temperature, and behavior", None),
     "Gateway": ("Gateway Settings", "Configure server host, port, and heartbeat", None),
-    "Tools": ("Tools Settings", "Configure web search, shell exec, and other tools", {"mcp_servers"}),
+    "Tools": ("Tools Settings", "Configure web search, shell bash, and other tools", {"mcp_servers"}),
 }
 
 _SETTINGS_GETTER = {

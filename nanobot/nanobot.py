@@ -77,7 +77,7 @@ class Nanobot:
             max_tool_result_chars=defaults.max_tool_result_chars,
             provider_retry_mode=defaults.provider_retry_mode,
             web_config=config.tools.web,
-            exec_config=config.tools.exec,
+            bash_config=config.tools.bash,
             restrict_to_workspace=config.tools.restrict_to_workspace,
             mcp_servers=config.tools.mcp_servers,
             timezone=defaults.timezone,
