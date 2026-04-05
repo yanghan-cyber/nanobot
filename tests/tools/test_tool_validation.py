@@ -11,7 +11,7 @@ from nanobot.agent.tools import (
 )
 from nanobot.agent.tools.base import Tool
 from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.tools.shell import ExecTool
+from nanobot.agent.tools.shell import BashTool
 
 
 class SampleTool(Tool):
@@ -197,7 +197,7 @@ async def test_registry_returns_validation_error() -> None:
 
 def test_exec_extract_absolute_paths_keeps_full_windows_path() -> None:
     cmd = r"type C:\user\workspace\txt"
-    paths = ExecTool._extract_absolute_paths(cmd)
+    paths = BashTool._extract_absolute_paths(cmd)
     assert paths == [r"C:\user\workspace\txt"]
 
 
@@ -205,45 +205,45 @@ def test_exec_extract_absolute_paths_captures_windows_drive_root_path() -> None:
     """Windows drive root paths like `E:\\` must be extracted for workspace guarding."""
     # Note: raw strings cannot end with a single backslash.
     cmd = "dir E:\\"
-    paths = ExecTool._extract_absolute_paths(cmd)
+    paths = BashTool._extract_absolute_paths(cmd)
     assert paths == ["E:\\"]
 
 
 def test_exec_extract_absolute_paths_ignores_relative_posix_segments() -> None:
     cmd = ".venv/bin/python script.py"
-    paths = ExecTool._extract_absolute_paths(cmd)
+    paths = BashTool._extract_absolute_paths(cmd)
     assert "/bin/python" not in paths
 
 
 def test_exec_extract_absolute_paths_captures_posix_absolute_paths() -> None:
     cmd = "cat /tmp/data.txt > /tmp/out.txt"
-    paths = ExecTool._extract_absolute_paths(cmd)
+    paths = BashTool._extract_absolute_paths(cmd)
     assert "/tmp/data.txt" in paths
     assert "/tmp/out.txt" in paths
 
 
 def test_exec_extract_absolute_paths_captures_home_paths() -> None:
     cmd = "cat ~/.nanobot/config.json > ~/out.txt"
-    paths = ExecTool._extract_absolute_paths(cmd)
+    paths = BashTool._extract_absolute_paths(cmd)
     assert "~/.nanobot/config.json" in paths
     assert "~/out.txt" in paths
 
 
 def test_exec_extract_absolute_paths_captures_quoted_paths() -> None:
     cmd = 'cat "/tmp/data.txt" "~/.nanobot/config.json"'
-    paths = ExecTool._extract_absolute_paths(cmd)
+    paths = BashTool._extract_absolute_paths(cmd)
     assert "/tmp/data.txt" in paths
     assert "~/.nanobot/config.json" in paths
 
 
 def test_exec_guard_blocks_home_path_outside_workspace(tmp_path) -> None:
-    tool = ExecTool(restrict_to_workspace=True)
+    tool = BashTool(restrict_to_workspace=True)
     error = tool._guard_command("cat ~/.nanobot/config.json", str(tmp_path))
     assert error == "Error: Command blocked by safety guard (path outside working dir)"
 
 
 def test_exec_guard_blocks_quoted_home_path_outside_workspace(tmp_path) -> None:
-    tool = ExecTool(restrict_to_workspace=True)
+    tool = BashTool(restrict_to_workspace=True)
     error = tool._guard_command('cat "~/.nanobot/config.json"', str(tmp_path))
     assert error == "Error: Command blocked by safety guard (path outside working dir)"
 
@@ -256,7 +256,7 @@ def test_exec_guard_allows_media_path_outside_workspace(tmp_path, monkeypatch) -
 
     monkeypatch.setattr("nanobot.agent.tools.shell.get_media_dir", lambda: media_dir)
 
-    tool = ExecTool(restrict_to_workspace=True)
+    tool = BashTool(restrict_to_workspace=True)
     error = tool._guard_command(f'cat "{media_file}"', str(tmp_path / "workspace"))
     assert error is None
 
@@ -295,7 +295,7 @@ def test_exec_guard_blocks_windows_drive_root_outside_workspace(monkeypatch) -> 
 
     monkeypatch.setattr(shell_mod, "Path", FakeWindowsPath)
 
-    tool = ExecTool(restrict_to_workspace=True)
+    tool = BashTool(restrict_to_workspace=True)
     error = tool._guard_command("dir E:\\", "E:\\workspace")
     assert error == "Error: Command blocked by safety guard (path outside working dir)"
 
@@ -531,12 +531,12 @@ def test_cast_params_single_value_not_auto_wrapped_to_array() -> None:
     assert result["items"] == "text"  # Not wrapped to ["text"]
 
 
-# --- ExecTool enhancement tests ---
+# --- BashTool enhancement tests ---
 
 
 async def test_exec_always_returns_exit_code() -> None:
     """Exit code should appear in output even on success (exit 0)."""
-    tool = ExecTool()
+    tool = BashTool()
     result = await tool.execute(command="echo hello")
     assert "Exit code: 0" in result
     assert "hello" in result
@@ -544,7 +544,7 @@ async def test_exec_always_returns_exit_code() -> None:
 
 async def test_exec_head_tail_truncation() -> None:
     """Long output should preserve both head and tail."""
-    tool = ExecTool()
+    tool = BashTool()
     # Generate output that exceeds _MAX_OUTPUT (10_000 chars)
     # Use python to generate output to avoid command line length limits
     result = await tool.execute(
@@ -559,7 +559,7 @@ async def test_exec_head_tail_truncation() -> None:
 
 async def test_exec_timeout_parameter() -> None:
     """LLM-supplied timeout should override the constructor default."""
-    tool = ExecTool(timeout=60)
+    tool = BashTool(timeout=60)
     # A very short timeout should cause the command to be killed
     result = await tool.execute(command="sleep 10", timeout=1)
     assert "timed out" in result
@@ -568,7 +568,7 @@ async def test_exec_timeout_parameter() -> None:
 
 async def test_exec_timeout_capped_at_max() -> None:
     """Timeout values above _MAX_TIMEOUT should be clamped."""
-    tool = ExecTool()
+    tool = BashTool()
     # Should not raise — just clamp to 600
     result = await tool.execute(command="echo ok", timeout=9999)
     assert "Exit code: 0" in result

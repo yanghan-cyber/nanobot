@@ -13,7 +13,7 @@ from nanobot.config.schema import AgentDefaults
 _MAX_TOOL_RESULT_CHARS = AgentDefaults().max_tool_result_chars
 
 
-def _make_loop(*, exec_config=None):
+def _make_loop(*, bash_config=None):
     """Create a minimal AgentLoop with mocked dependencies."""
     from nanobot.agent.loop import AgentLoop
     from nanobot.bus.queue import MessageBus
@@ -28,7 +28,7 @@ def _make_loop(*, exec_config=None):
          patch("nanobot.agent.loop.SessionManager"), \
          patch("nanobot.agent.loop.SubagentManager") as MockSubMgr:
         MockSubMgr.return_value.cancel_by_session = AsyncMock(return_value=0)
-        loop = AgentLoop(bus=bus, provider=provider, workspace=workspace, exec_config=exec_config)
+        loop = AgentLoop(bus=bus, provider=provider, workspace=workspace, bash_config=bash_config)
     return loop, bus
 
 
@@ -102,11 +102,11 @@ class TestHandleStop:
 
 class TestDispatch:
     def test_exec_tool_not_registered_when_disabled(self):
-        from nanobot.config.schema import ExecToolConfig
+        from nanobot.config.schema import BashToolConfig
 
-        loop, _bus = _make_loop(exec_config=ExecToolConfig(enable=False))
+        loop, _bus = _make_loop(bash_config=BashToolConfig(enable=False))
 
-        assert loop.tools.get("exec") is None
+        assert loop.tools.get("bash") is None
 
     @pytest.mark.asyncio
     async def test_dispatch_processes_and_publishes(self):
@@ -283,7 +283,7 @@ class TestSubagentCancellation:
     async def test_subagent_exec_tool_not_registered_when_disabled(self, tmp_path):
         from nanobot.agent.subagent import SubagentManager
         from nanobot.bus.queue import MessageBus
-        from nanobot.config.schema import ExecToolConfig
+        from nanobot.config.schema import BashToolConfig
 
         bus = MessageBus()
         provider = MagicMock()
@@ -293,12 +293,12 @@ class TestSubagentCancellation:
             workspace=tmp_path,
             bus=bus,
             max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
-            exec_config=ExecToolConfig(enable=False),
+            bash_config=BashToolConfig(enable=False),
         )
         mgr._announce_result = AsyncMock()
 
         async def fake_run(spec):
-            assert spec.tools.get("exec") is None
+            assert spec.tools.get("bash") is None
             return SimpleNamespace(
                 stop_reason="done",
                 final_content="done",

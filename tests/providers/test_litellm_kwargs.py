@@ -33,7 +33,7 @@ def _fake_chat_response(content: str = "ok") -> SimpleNamespace:
 def _fake_tool_call_response() -> SimpleNamespace:
     """Build a minimal chat response that includes Gemini-style extra_content."""
     function = SimpleNamespace(
-        name="exec",
+        name="bash",
         arguments='{"cmd":"ls"}',
         provider_specific_fields={"inner": "value"},
     )

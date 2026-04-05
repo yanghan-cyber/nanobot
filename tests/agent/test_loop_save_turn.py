@@ -94,7 +94,7 @@ def test_restore_runtime_checkpoint_rehydrates_completed_and_pending_tools() -> 
                         {
                             "id": "call_pending",
                             "type": "function",
-                            "function": {"name": "exec", "arguments": "{}"},
+                            "function": {"name": "bash", "arguments": "{}"},
                         },
                     ],
                 },
@@ -110,7 +110,7 @@ def test_restore_runtime_checkpoint_rehydrates_completed_and_pending_tools() -> 
                     {
                         "id": "call_pending",
                         "type": "function",
-                        "function": {"name": "exec", "arguments": "{}"},
+                        "function": {"name": "bash", "arguments": "{}"},
                     }
                 ],
             }
@@ -144,7 +144,7 @@ def test_restore_runtime_checkpoint_dedupes_overlapping_tail() -> None:
                     {
                         "id": "call_pending",
                         "type": "function",
-                        "function": {"name": "exec", "arguments": "{}"},
+                        "function": {"name": "bash", "arguments": "{}"},
                     },
                 ],
             },
@@ -169,7 +169,7 @@ def test_restore_runtime_checkpoint_dedupes_overlapping_tail() -> None:
                         {
                             "id": "call_pending",
                             "type": "function",
-                            "function": {"name": "exec", "arguments": "{}"},
+                            "function": {"name": "bash", "arguments": "{}"},
                         },
                     ],
                 },
@@ -185,7 +185,7 @@ def test_restore_runtime_checkpoint_dedupes_overlapping_tail() -> None:
                     {
                         "id": "call_pending",
                         "type": "function",
-                        "function": {"name": "exec", "arguments": "{}"},
+                        "function": {"name": "bash", "arguments": "{}"},
                     }
                 ],
             }
