@@ -20,24 +20,34 @@ This file documents non-obvious constraints and usage patterns.
 
 ## glob — File Discovery
 
+- Powered by ripgrep. Returns file paths sorted by modification time (newest first)
 - Use `glob` to find files by pattern before falling back to shell commands
-- Simple patterns like `*.py` match recursively by filename
-- Use `entry_type="dirs"` when you need matching directories instead of files
-- Use `head_limit` and `offset` to page through large result sets
+- Supports recursive patterns like `**/*.py`, `src/**/*.ts`, `tests/**/test_*.py`
+- Use `head_limit` to cap results (default 250, max 1000; pass 0 for unlimited)
+- Use `offset` to skip the first N results for pagination (max 100000)
 - Prefer this over `bash` when you only need file paths
+- When doing open-ended searches needing multiple rounds, use subagent instead
 
 ## grep — Content Search
 
-- Use `grep` to search file contents inside the workspace
-- Default behavior returns only matching file paths (`output_mode="files_with_matches"`)
-- Supports optional `glob` filtering plus `context_before` / `context_after`
-- Supports `type="py"`, `type="ts"`, `type="md"` and similar shorthand filters
-- Use `fixed_strings=true` for literal keywords containing regex characters
-- Use `output_mode="files_with_matches"` to get only matching file paths
-- Use `output_mode="count"` to size a search before reading full matches
-- Use `head_limit` and `offset` to page across results
+- Powered by ripgrep. ALWAYS prefer `grep` over running `grep`/`rg` in bash
+- Supports full regex syntax (e.g., `log.*Error`, `function\s+\w+`)
+- Pattern syntax follows ripgrep: literal braces need escaping (`interface\{\}`)
+- Default mode returns only matching file paths (`output_mode="files_with_matches"`)
+- Output modes:
+  - `files_with_matches` — deduplicated file paths (default)
+  - `content` — matching lines in `path:line: content` format; context lines use `path:line- content`
+  - `count` — per-file match counts with total summary
+- Use `glob` to filter by filename (e.g., `"*.py"`, `"*.{ts,tsx}"`)
+- Use `type` for file-type shorthand (e.g., `"py"`, `"js"`, `"rust"`); more efficient than `glob`
+- Use `case_insensitive=true` for case-insensitive search
+- Use `fixed_strings=true` to treat pattern as plain text instead of regex
+- Use `context_before` / `context_after` for surrounding context lines (content mode only, max 20)
+- Use `multiline=true` for cross-line patterns where `.` matches newlines
+- Use `head_limit` to cap results (default 250, max 1000; pass 0 for unlimited)
+- Use `offset` to skip the first N matches for pagination (max 100000)
+- Output is truncated at 50K characters to protect context window
 - Prefer this over `bash` for code and history searches
-- Binary or oversized files may be skipped to keep results readable
 
 ## cron — Scheduled Reminders
 

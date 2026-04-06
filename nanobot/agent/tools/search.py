@@ -13,7 +13,7 @@ from nanobot.agent.tools.filesystem import _FsTool
 from nanobot.utils.ripgrep import ensure_rg
 
 _DEFAULT_HEAD_LIMIT = 250
-_MAX_RESULT_CHARS = 128_000
+_MAX_RESULT_CHARS = 50_000
 
 
 def _resolve_limit(head_limit: int | None) -> int | None:
@@ -62,7 +62,10 @@ class GlobTool(_SearchTool):
         return (
             "Fast file pattern matching tool powered by ripgrep. "
             "Supports glob patterns like '**/*.js' or 'src/**/*.ts'. "
-            "Returns matching file paths sorted by modification time."
+            "Returns matching file paths sorted by modification time (newest first). "
+            "Use this tool when you need to find files by name patterns. "
+            "When doing open-ended searches needing multiple rounds of "
+            "globbing and grepping, use subagent instead."
         )
 
     @property
@@ -81,17 +84,26 @@ class GlobTool(_SearchTool):
                 },
                 "path": {
                     "type": "string",
-                    "description": "Directory to search from (default '.')",
+                    "description": (
+                        "Directory to search from. "
+                        "If not specified, the current working directory will be used."
+                    ),
                 },
                 "head_limit": {
                     "type": "integer",
-                    "description": "Maximum number of matches to return (default 250)",
+                    "description": (
+                        "Maximum number of matches to return (default 250, max 1000). "
+                        "Pass 0 for unlimited."
+                    ),
                     "minimum": 0,
                     "maximum": 1000,
                 },
                 "offset": {
                     "type": "integer",
-                    "description": "Skip the first N matching entries before returning results",
+                    "description": (
+                        "Skip the first N matching entries before returning results "
+                        "(equivalent to 'tail -n +N'). Useful for pagination."
+                    ),
                     "minimum": 0,
                     "maximum": 100000,
                 },
@@ -168,8 +180,16 @@ class GrepTool(_SearchTool):
     def description(self) -> str:
         return (
             "A powerful search tool built on ripgrep. "
-            "Supports full regex syntax, glob/type filtering, "
-            "multiline matching, context lines, and multiple output modes."
+            "ALWAYS use this tool for search tasks instead of running "
+            "'grep' or 'rg' in bash. "
+            "Supports full regex syntax (e.g., 'log.*Error', 'function\\s+\\w+'). "
+            "Pattern syntax follows ripgrep: literal braces need escaping "
+            "(use 'interface\\{\\}' to find 'interface{}'). "
+            "Output modes: 'content' shows matching lines with context; "
+            "'files_with_matches' shows only file paths (default); "
+            "'count' shows per-file match counts. "
+            "Multiline matching: by default patterns match within single lines only. "
+            "For cross-line patterns, use multiline=true."
         )
 
     @property
@@ -183,22 +203,31 @@ class GrepTool(_SearchTool):
             "properties": {
                 "pattern": {
                     "type": "string",
-                    "description": "The regular expression pattern to search for",
+                    "description": (
+                        "The regular expression pattern to search for in file contents"
+                    ),
                     "minLength": 1,
                 },
                 "path": {
                     "type": "string",
-                    "description": "File or directory to search in (default '.')",
+                    "description": (
+                        "File or directory to search in. "
+                        "If not specified, the current working directory will be used."
+                    ),
                 },
                 "glob": {
                     "type": "string",
-                    "description": "Glob pattern to filter files (e.g. '*.py', '**/*.tsx')",
+                    "description": (
+                        "Glob pattern to filter files (e.g. '*.py', '**/*.tsx'). "
+                        "Maps to rg --glob."
+                    ),
                 },
                 "type": {
                     "type": "string",
                     "description": (
                         "File type to search (rg --type). Common types: "
-                        "js, py, rust, go, java, etc."
+                        "js, py, rust, go, java, etc. "
+                        "More efficient than glob filtering for standard file types."
                     ),
                 },
                 "case_insensitive": {
@@ -207,26 +236,37 @@ class GrepTool(_SearchTool):
                 },
                 "fixed_strings": {
                     "type": "boolean",
-                    "description": "Treat pattern as plain text instead of regex (default false)",
+                    "description": (
+                        "Treat pattern as plain text instead of regex (default false). "
+                        "Useful when searching for literal strings containing "
+                        "regex metacharacters."
+                    ),
                 },
                 "output_mode": {
                     "type": "string",
                     "enum": ["content", "files_with_matches", "count"],
                     "description": (
-                        "Output mode: 'content' shows matching lines with context; "
-                        "'files_with_matches' shows only file paths (default); "
-                        "'count' shows match counts per file."
+                        "Output mode: 'files_with_matches' shows only file paths "
+                        "(default); 'content' shows matching lines with context "
+                        "(supports context_before/after and head_limit); "
+                        "'count' shows per-file match counts."
                     ),
                 },
                 "context_before": {
                     "type": "integer",
-                    "description": "Number of lines of context before each match",
+                    "description": (
+                        "Number of lines of context before each match. "
+                        "Only applies when output_mode='content'."
+                    ),
                     "minimum": 0,
                     "maximum": 20,
                 },
                 "context_after": {
                     "type": "integer",
-                    "description": "Number of lines of context after each match",
+                    "description": (
+                        "Number of lines of context after each match. "
+                        "Only applies when output_mode='content'."
+                    ),
                     "minimum": 0,
                     "maximum": 20,
                 },
@@ -234,21 +274,27 @@ class GrepTool(_SearchTool):
                     "type": "boolean",
                     "description": (
                         "Enable multiline mode where . matches newlines and "
-                        "patterns can span lines (default false)."
+                        "patterns can span lines (rg -U --multiline-dotall). "
+                        "Default: false."
                     ),
                 },
                 "head_limit": {
                     "type": "integer",
                     "description": (
-                        "Maximum number of results to return. Default 250. "
-                        "Pass 0 for unlimited."
+                        "Maximum number of results to return (default 250, max 1000). "
+                        "Pass 0 for unlimited. Equivalent to '| head -N'. "
+                        "Works across all output modes."
                     ),
                     "minimum": 0,
                     "maximum": 1000,
                 },
                 "offset": {
                     "type": "integer",
-                    "description": "Skip the first N results before applying head_limit",
+                    "description": (
+                        "Skip the first N results before applying head_limit. "
+                        "Equivalent to '| tail -n +N | head -N'. "
+                        "Works across all output modes."
+                    ),
                     "minimum": 0,
                     "maximum": 100000,
                 },
