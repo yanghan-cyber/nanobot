@@ -1,70 +1,30 @@
-"""Search tools: grep and glob."""
+"""Search tools: grep and glob powered by ripgrep."""
 
 from __future__ import annotations
 
-import fnmatch
-import os
-import re
-from pathlib import Path, PurePosixPath
-from typing import Any, Iterable, TypeVar
+import asyncio
+import json
+from pathlib import Path
+from typing import Any
 
-from nanobot.agent.tools.filesystem import ListDirTool, _FsTool
+from loguru import logger
+
+from nanobot.agent.tools.filesystem import _FsTool
+from nanobot.utils.ripgrep import ensure_rg
 
 _DEFAULT_HEAD_LIMIT = 250
-T = TypeVar("T")
-_TYPE_GLOB_MAP = {
-    "py": ("*.py", "*.pyi"),
-    "python": ("*.py", "*.pyi"),
-    "js": ("*.js", "*.jsx", "*.mjs", "*.cjs"),
-    "ts": ("*.ts", "*.tsx", "*.mts", "*.cts"),
-    "tsx": ("*.tsx",),
-    "jsx": ("*.jsx",),
-    "json": ("*.json",),
-    "md": ("*.md", "*.mdx"),
-    "markdown": ("*.md", "*.mdx"),
-    "go": ("*.go",),
-    "rs": ("*.rs",),
-    "rust": ("*.rs",),
-    "java": ("*.java",),
-    "sh": ("*.sh", "*.bash"),
-    "yaml": ("*.yaml", "*.yml"),
-    "yml": ("*.yaml", "*.yml"),
-    "toml": ("*.toml",),
-    "sql": ("*.sql",),
-    "html": ("*.html", "*.htm"),
-    "css": ("*.css", "*.scss", "*.sass"),
-}
+_MAX_RESULT_CHARS = 128_000
 
 
-def _normalize_pattern(pattern: str) -> str:
-    return pattern.strip().replace("\\", "/")
+def _resolve_limit(head_limit: int | None) -> int | None:
+    return None if head_limit == 0 else (head_limit or _DEFAULT_HEAD_LIMIT)
 
 
-def _match_glob(rel_path: str, name: str, pattern: str) -> bool:
-    normalized = _normalize_pattern(pattern)
-    if not normalized:
-        return False
-    if "/" in normalized or normalized.startswith("**"):
-        return PurePosixPath(rel_path).match(normalized)
-    return fnmatch.fnmatch(name, normalized)
-
-
-def _is_binary(raw: bytes) -> bool:
-    if b"\x00" in raw:
-        return True
-    sample = raw[:4096]
-    if not sample:
-        return False
-    non_text = sum(byte < 9 or 13 < byte < 32 for byte in sample)
-    return (non_text / len(sample)) > 0.2
-
-
-def _paginate(items: list[T], limit: int | None, offset: int) -> tuple[list[T], bool]:
+def _paginate(items: list, limit: int | None, offset: int) -> tuple[list, bool]:
     if limit is None:
         return items[offset:], False
-    sliced = items[offset : offset + limit]
-    truncated = len(items) > offset + limit
-    return sliced, truncated
+    sliced = items[offset: offset + limit]
+    return sliced, len(items) > offset + limit
 
 
 def _pagination_note(limit: int | None, offset: int, truncated: bool) -> str | None:
@@ -77,63 +37,21 @@ def _pagination_note(limit: int | None, offset: int, truncated: bool) -> str | N
     return None
 
 
-def _matches_type(name: str, file_type: str | None) -> bool:
-    if not file_type:
-        return True
-    lowered = file_type.strip().lower()
-    if not lowered:
-        return True
-    patterns = _TYPE_GLOB_MAP.get(lowered, (f"*.{lowered}",))
-    return any(fnmatch.fnmatch(name.lower(), pattern.lower()) for pattern in patterns)
-
-
 class _SearchTool(_FsTool):
-    _IGNORE_DIRS = set(ListDirTool._IGNORE_DIRS)
+    """Base class for ripgrep-powered search tools."""
 
-    def _display_path(self, target: Path, root: Path) -> str:
+    def _display_path(self, abs_path: Path) -> str:
+        """Convert an absolute path to a workspace-relative display path."""
         if self._workspace:
             try:
-                return target.relative_to(self._workspace).as_posix()
+                return abs_path.relative_to(self._workspace).as_posix()
             except ValueError:
                 pass
-        return target.relative_to(root).as_posix()
-
-    def _iter_files(self, root: Path) -> Iterable[Path]:
-        if root.is_file():
-            yield root
-            return
-
-        for dirpath, dirnames, filenames in os.walk(root):
-            dirnames[:] = sorted(d for d in dirnames if d not in self._IGNORE_DIRS)
-            current = Path(dirpath)
-            for filename in sorted(filenames):
-                yield current / filename
-
-    def _iter_entries(
-        self,
-        root: Path,
-        *,
-        include_files: bool,
-        include_dirs: bool,
-    ) -> Iterable[Path]:
-        if root.is_file():
-            if include_files:
-                yield root
-            return
-
-        for dirpath, dirnames, filenames in os.walk(root):
-            dirnames[:] = sorted(d for d in dirnames if d not in self._IGNORE_DIRS)
-            current = Path(dirpath)
-            if include_dirs:
-                for dirname in dirnames:
-                    yield current / dirname
-            if include_files:
-                for filename in sorted(filenames):
-                    yield current / filename
+        return abs_path.name
 
 
 class GlobTool(_SearchTool):
-    """Find files matching a glob pattern."""
+    """Find files matching a glob pattern using ripgrep."""
 
     @property
     def name(self) -> str:
@@ -142,8 +60,9 @@ class GlobTool(_SearchTool):
     @property
     def description(self) -> str:
         return (
-            "Find files matching a glob pattern. "
-            "Simple patterns like '*.py' match by filename recursively."
+            "Fast file pattern matching tool powered by ripgrep. "
+            "Supports glob patterns like '**/*.js' or 'src/**/*.ts'. "
+            "Returns matching file paths sorted by modification time."
         )
 
     @property
@@ -164,12 +83,6 @@ class GlobTool(_SearchTool):
                     "type": "string",
                     "description": "Directory to search from (default '.')",
                 },
-                "max_results": {
-                    "type": "integer",
-                    "description": "Legacy alias for head_limit",
-                    "minimum": 1,
-                    "maximum": 1000,
-                },
                 "head_limit": {
                     "type": "integer",
                     "description": "Maximum number of matches to return (default 250)",
@@ -182,11 +95,6 @@ class GlobTool(_SearchTool):
                     "minimum": 0,
                     "maximum": 100000,
                 },
-                "entry_type": {
-                    "type": "string",
-                    "enum": ["files", "dirs", "both"],
-                    "description": "Whether to match files, directories, or both (default files)",
-                },
             },
             "required": ["pattern"],
         }
@@ -195,53 +103,53 @@ class GlobTool(_SearchTool):
         self,
         pattern: str,
         path: str = ".",
-        max_results: int | None = None,
         head_limit: int | None = None,
         offset: int = 0,
-        entry_type: str = "files",
         **kwargs: Any,
     ) -> str:
         try:
             root = self._resolve(path or ".")
-            if not root.exists():
-                return f"Error: Path not found: {path}"
-            if not root.is_dir():
-                return f"Error: Not a directory: {path}"
+            limit = _resolve_limit(head_limit)
 
-            if head_limit is not None:
-                limit = None if head_limit == 0 else head_limit
-            elif max_results is not None:
-                limit = max_results
-            else:
-                limit = _DEFAULT_HEAD_LIMIT
-            include_files = entry_type in {"files", "both"}
-            include_dirs = entry_type in {"dirs", "both"}
-            matches: list[tuple[str, float]] = []
-            for entry in self._iter_entries(
-                root,
-                include_files=include_files,
-                include_dirs=include_dirs,
-            ):
-                rel_path = entry.relative_to(root).as_posix()
-                if _match_glob(rel_path, entry.name, pattern):
-                    display = self._display_path(entry, root)
-                    if entry.is_dir():
-                        display += "/"
-                    try:
-                        mtime = entry.stat().st_mtime
-                    except OSError:
-                        mtime = 0.0
-                    matches.append((display, mtime))
+            try:
+                rg_path = ensure_rg()
+            except FileNotFoundError as e:
+                return f"Error: {e}"
 
-            if not matches:
+            cmd = [rg_path, "--files", "--sortr", "modified", "--glob", pattern, str(root)]
+
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await proc.communicate()
+
+            if proc.returncode == 2:
+                error_msg = stderr.decode("utf-8", errors="replace")
+                return f"Error: {error_msg.strip()}"
+
+            files = stdout.decode("utf-8", errors="replace").splitlines()
+            files = [f.strip() for f in files if f.strip()]
+
+            if not files:
                 return f"No paths matched pattern '{pattern}' in {path}"
 
-            matches.sort(key=lambda item: (-item[1], item[0]))
-            ordered = [name for name, _ in matches]
-            paged, truncated = _paginate(ordered, limit, offset)
-            result = "\n".join(paged)
+            display_files = [self._display_path(Path(f)) for f in files]
+
+            total = len(display_files)
+            if offset > 0:
+                display_files = display_files[offset:]
+            if limit is not None:
+                display_files = display_files[:limit]
+                truncated = total > offset + limit
+            else:
+                truncated = False
+
+            result = "\n".join(display_files)
             if note := _pagination_note(limit, offset, truncated):
                 result += f"\n\n{note}"
+
             return result
         except PermissionError as e:
             return f"Error: {e}"
@@ -250,9 +158,7 @@ class GlobTool(_SearchTool):
 
 
 class GrepTool(_SearchTool):
-    """Search file contents using a regex-like pattern."""
-    _MAX_RESULT_CHARS = 128_000
-    _MAX_FILE_BYTES = 2_000_000
+    """Search file contents using ripgrep with JSON streaming output."""
 
     @property
     def name(self) -> str:
@@ -261,9 +167,9 @@ class GrepTool(_SearchTool):
     @property
     def description(self) -> str:
         return (
-            "Search file contents with a regex-like pattern. "
-            "Supports optional glob filtering, structured output modes, "
-            "type filters, pagination, and surrounding context lines."
+            "A powerful search tool built on ripgrep. "
+            "Supports full regex syntax, glob/type filtering, "
+            "multiline matching, context lines, and multiple output modes."
         )
 
     @property
@@ -277,7 +183,7 @@ class GrepTool(_SearchTool):
             "properties": {
                 "pattern": {
                     "type": "string",
-                    "description": "Regex or plain text pattern to search for",
+                    "description": "The regular expression pattern to search for",
                     "minLength": 1,
                 },
                 "path": {
@@ -286,11 +192,14 @@ class GrepTool(_SearchTool):
                 },
                 "glob": {
                     "type": "string",
-                    "description": "Optional file filter, e.g. '*.py' or 'tests/**/test_*.py'",
+                    "description": "Glob pattern to filter files (e.g. '*.py', '**/*.tsx')",
                 },
                 "type": {
                     "type": "string",
-                    "description": "Optional file type shorthand, e.g. 'py', 'ts', 'md', 'json'",
+                    "description": (
+                        "File type to search (rg --type). Common types: "
+                        "js, py, rust, go, java, etc."
+                    ),
                 },
                 "case_insensitive": {
                     "type": "boolean",
@@ -304,10 +213,9 @@ class GrepTool(_SearchTool):
                     "type": "string",
                     "enum": ["content", "files_with_matches", "count"],
                     "description": (
-                        "content: matching lines with optional context; "
-                        "files_with_matches: only matching file paths; "
-                        "count: matching line counts per file. "
-                        "Default: files_with_matches"
+                        "Output mode: 'content' shows matching lines with context; "
+                        "'files_with_matches' shows only file paths (default); "
+                        "'count' shows match counts per file."
                     ),
                 },
                 "context_before": {
@@ -322,28 +230,18 @@ class GrepTool(_SearchTool):
                     "minimum": 0,
                     "maximum": 20,
                 },
-                "max_matches": {
-                    "type": "integer",
+                "multiline": {
+                    "type": "boolean",
                     "description": (
-                        "Legacy alias for head_limit in content mode"
+                        "Enable multiline mode where . matches newlines and "
+                        "patterns can span lines (default false)."
                     ),
-                    "minimum": 1,
-                    "maximum": 1000,
-                },
-                "max_results": {
-                    "type": "integer",
-                    "description": (
-                        "Legacy alias for head_limit in files_with_matches or count mode"
-                    ),
-                    "minimum": 1,
-                    "maximum": 1000,
                 },
                 "head_limit": {
                     "type": "integer",
                     "description": (
-                        "Maximum number of results to return. In content mode this limits "
-                        "matching line blocks; in other modes it limits file entries. "
-                        "Default 250"
+                        "Maximum number of results to return. Default 250. "
+                        "Pass 0 for unlimited."
                     ),
                     "minimum": 0,
                     "maximum": 1000,
@@ -358,22 +256,6 @@ class GrepTool(_SearchTool):
             "required": ["pattern"],
         }
 
-    @staticmethod
-    def _format_block(
-        display_path: str,
-        lines: list[str],
-        match_line: int,
-        before: int,
-        after: int,
-    ) -> str:
-        start = max(1, match_line - before)
-        end = min(len(lines), match_line + after)
-        block = [f"{display_path}:{match_line}"]
-        for line_no in range(start, end + 1):
-            marker = ">" if line_no == match_line else " "
-            block.append(f"{marker} {line_no}| {lines[line_no - 1]}")
-        return "\n".join(block)
-
     async def execute(
         self,
         pattern: str,
@@ -385,169 +267,216 @@ class GrepTool(_SearchTool):
         output_mode: str = "files_with_matches",
         context_before: int = 0,
         context_after: int = 0,
-        max_matches: int | None = None,
-        max_results: int | None = None,
+        multiline: bool = False,
         head_limit: int | None = None,
         offset: int = 0,
         **kwargs: Any,
     ) -> str:
         try:
             target = self._resolve(path or ".")
-            if not target.exists():
-                return f"Error: Path not found: {path}"
-            if not (target.is_dir() or target.is_file()):
-                return f"Error: Unsupported path: {path}"
+            limit = _resolve_limit(head_limit)
 
-            flags = re.IGNORECASE if case_insensitive else 0
             try:
-                needle = re.escape(pattern) if fixed_strings else pattern
-                regex = re.compile(needle, flags)
-            except re.error as e:
-                return f"Error: invalid regex pattern: {e}"
+                rg_path = ensure_rg()
+            except FileNotFoundError as e:
+                return f"Error: {e}"
 
-            if head_limit is not None:
-                limit = None if head_limit == 0 else head_limit
-            elif output_mode == "content" and max_matches is not None:
-                limit = max_matches
-            elif output_mode != "content" and max_results is not None:
-                limit = max_results
-            else:
-                limit = _DEFAULT_HEAD_LIMIT
-            blocks: list[str] = []
-            result_chars = 0
-            seen_content_matches = 0
-            truncated = False
-            size_truncated = False
-            skipped_binary = 0
-            skipped_large = 0
-            matching_files: list[str] = []
-            counts: dict[str, int] = {}
-            file_mtimes: dict[str, float] = {}
-            root = target if target.is_dir() else target.parent
+            cmd = [rg_path, "--json"]
+            if case_insensitive:
+                cmd.append("-i")
+            if fixed_strings:
+                cmd.append("--fixed-strings")
+            if glob:
+                cmd.extend(["--glob", glob])
+            if type:
+                cmd.extend(["--type", type])
+            if multiline:
+                cmd.extend(["--multiline", "--multiline-dotall"])
+            if context_before > 0:
+                cmd.extend(["-B", str(context_before)])
+            if context_after > 0:
+                cmd.extend(["-A", str(context_after)])
 
-            for file_path in self._iter_files(target):
-                rel_path = file_path.relative_to(root).as_posix()
-                if glob and not _match_glob(rel_path, file_path.name, glob):
-                    continue
-                if not _matches_type(file_path.name, type):
-                    continue
+            cmd.append(pattern)
+            cmd.append(str(target))
 
-                raw = file_path.read_bytes()
-                if len(raw) > self._MAX_FILE_BYTES:
-                    skipped_large += 1
-                    continue
-                if _is_binary(raw):
-                    skipped_binary += 1
-                    continue
-                try:
-                    mtime = file_path.stat().st_mtime
-                except OSError:
-                    mtime = 0.0
-                try:
-                    content = raw.decode("utf-8")
-                except UnicodeDecodeError:
-                    skipped_binary += 1
-                    continue
+            return await self._run_rg(cmd, target, output_mode, limit, offset)
 
-                lines = content.splitlines()
-                display_path = self._display_path(file_path, root)
-                file_had_match = False
-                for idx, line in enumerate(lines, start=1):
-                    if not regex.search(line):
-                        continue
-                    file_had_match = True
-
-                    if output_mode == "count":
-                        counts[display_path] = counts.get(display_path, 0) + 1
-                        continue
-                    if output_mode == "files_with_matches":
-                        if display_path not in matching_files:
-                            matching_files.append(display_path)
-                            file_mtimes[display_path] = mtime
-                        break
-
-                    seen_content_matches += 1
-                    if seen_content_matches <= offset:
-                        continue
-                    if limit is not None and len(blocks) >= limit:
-                        truncated = True
-                        break
-                    block = self._format_block(
-                        display_path,
-                        lines,
-                        idx,
-                        context_before,
-                        context_after,
-                    )
-                    extra_sep = 2 if blocks else 0
-                    if result_chars + extra_sep + len(block) > self._MAX_RESULT_CHARS:
-                        size_truncated = True
-                        break
-                    blocks.append(block)
-                    result_chars += extra_sep + len(block)
-                if output_mode == "count" and file_had_match:
-                    if display_path not in matching_files:
-                        matching_files.append(display_path)
-                        file_mtimes[display_path] = mtime
-                if output_mode in {"count", "files_with_matches"} and file_had_match:
-                    continue
-                if truncated or size_truncated:
-                    break
-
-            if output_mode == "files_with_matches":
-                if not matching_files:
-                    result = f"No matches found for pattern '{pattern}' in {path}"
-                else:
-                    ordered_files = sorted(
-                        matching_files,
-                        key=lambda name: (-file_mtimes.get(name, 0.0), name),
-                    )
-                    paged, truncated = _paginate(ordered_files, limit, offset)
-                    result = "\n".join(paged)
-            elif output_mode == "count":
-                if not counts:
-                    result = f"No matches found for pattern '{pattern}' in {path}"
-                else:
-                    ordered_files = sorted(
-                        matching_files,
-                        key=lambda name: (-file_mtimes.get(name, 0.0), name),
-                    )
-                    ordered, truncated = _paginate(ordered_files, limit, offset)
-                    lines = [f"{name}: {counts[name]}" for name in ordered]
-                    result = "\n".join(lines)
-            else:
-                if not blocks:
-                    result = f"No matches found for pattern '{pattern}' in {path}"
-                else:
-                    result = "\n\n".join(blocks)
-
-            notes: list[str] = []
-            if output_mode == "content" and truncated:
-                notes.append(
-                    f"(pagination: limit={limit}, offset={offset})"
-                )
-            elif output_mode == "content" and size_truncated:
-                notes.append("(output truncated due to size)")
-            elif truncated and output_mode in {"count", "files_with_matches"}:
-                notes.append(
-                    f"(pagination: limit={limit}, offset={offset})"
-                )
-            elif output_mode in {"count", "files_with_matches"} and offset > 0:
-                notes.append(f"(pagination: offset={offset})")
-            elif output_mode == "content" and offset > 0 and blocks:
-                notes.append(f"(pagination: offset={offset})")
-            if skipped_binary:
-                notes.append(f"(skipped {skipped_binary} binary/unreadable files)")
-            if skipped_large:
-                notes.append(f"(skipped {skipped_large} large files)")
-            if output_mode == "count" and counts:
-                notes.append(
-                    f"(total matches: {sum(counts.values())} in {len(counts)} files)"
-                )
-            if notes:
-                result += "\n\n" + "\n".join(notes)
-            return result
         except PermissionError as e:
             return f"Error: {e}"
         except Exception as e:
+            logger.error("Grep error: {}", e)
             return f"Error searching files: {e}"
+
+    async def _run_rg(
+        self,
+        cmd: list[str],
+        target: Path,
+        output_mode: str,
+        limit: int | None,
+        offset: int,
+    ) -> str:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+
+        matching_files: list[str] = []
+        seen_files: set[str] = set()
+        counts: dict[str, int] = {}
+        content_blocks: list[str] = []
+        result_chars = 0
+        seen_matches = 0
+        truncated = False
+        size_truncated = False
+        early_exit = False
+
+        # Context state
+        buffered_context: list[str] = []
+        current_match_accepted = False
+
+        if not proc.stdout:
+            return "Error: Failed to open stdout pipe for ripgrep"
+
+        async for line_bytes in proc.stdout:
+            if truncated or size_truncated:
+                early_exit = True
+                break
+            try:
+                data = json.loads(line_bytes)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                logger.debug("Failed to parse rg JSON line: {}", line_bytes[:100])
+                continue
+
+            event_type = data.get("type")
+
+            if event_type not in ("match", "context"):
+                continue
+
+            path_data = data["data"]["path"]["text"]
+            line_num = data["data"]["line_number"]
+            content = data["data"]["lines"]["text"].rstrip("\n\r")
+            display_path = self._display_path(Path(path_data))
+
+            if event_type == "match":
+                if output_mode == "files_with_matches":
+                    if display_path not in seen_files:
+                        seen_files.add(display_path)
+                        matching_files.append(display_path)
+                        if limit is not None and len(matching_files) > offset + limit:
+                            early_exit = True
+                            break
+                    continue
+
+                if output_mode == "count":
+                    counts[display_path] = counts.get(display_path, 0) + 1
+                    if display_path not in seen_files:
+                        seen_files.add(display_path)
+                        matching_files.append(display_path)
+                    continue
+
+                # Content mode
+                seen_matches += 1
+                if seen_matches <= offset:
+                    current_match_accepted = False
+                    buffered_context.clear()
+                    continue
+
+                current_match_accepted = True
+
+                # Flush buffered before-context
+                for b_line in buffered_context:
+                    if limit is not None and len(content_blocks) >= limit:
+                        truncated = True
+                        break
+                    extra = 2 if content_blocks else 0
+                    if result_chars + extra + len(b_line) > _MAX_RESULT_CHARS:
+                        size_truncated = True
+                        break
+                    content_blocks.append(b_line)
+                    result_chars += extra + len(b_line)
+                buffered_context.clear()
+
+                if truncated or size_truncated:
+                    break
+
+                formatted = f"{display_path}:{line_num}: {content}"
+                extra = 2 if content_blocks else 0
+                if limit is not None and len(content_blocks) >= limit:
+                    truncated = True
+                    break
+                if result_chars + extra + len(formatted) > _MAX_RESULT_CHARS:
+                    size_truncated = True
+                    break
+                content_blocks.append(formatted)
+                result_chars += extra + len(formatted)
+
+            elif event_type == "context" and output_mode == "content":
+                formatted = f"{display_path}:{line_num}- {content}"
+                if current_match_accepted:
+                    if limit is not None and len(content_blocks) >= limit:
+                        truncated = True
+                        break
+                    extra = 2 if content_blocks else 0
+                    if result_chars + extra + len(formatted) > _MAX_RESULT_CHARS:
+                        size_truncated = True
+                        break
+                    content_blocks.append(formatted)
+                    result_chars += extra + len(formatted)
+                else:
+                    buffered_context.append(formatted)
+
+        # Clean up process — only terminate if we exited early
+        if early_exit:
+            try:
+                proc.terminate()
+                await asyncio.wait_for(proc.wait(), timeout=2.0)
+            except (asyncio.TimeoutError, ProcessLookupError):
+                pass
+        else:
+            await proc.wait()
+
+        # Check for rg errors (exit code 2 = error, e.g. invalid regex)
+        if proc.returncode == 2:
+            stderr_bytes = await proc.stderr.read()
+            error_msg = stderr_bytes.decode("utf-8", errors="replace").strip()
+            return f"Error: {error_msg}"
+
+        # Build output
+        if output_mode == "files_with_matches":
+            if not matching_files:
+                return f"No matches found for pattern in {target}"
+            paged, is_trunc = _paginate(matching_files, limit, offset)
+            result = "\n".join(paged)
+            if note := _pagination_note(limit, offset, is_trunc):
+                result += f"\n\n{note}"
+            return result
+
+        if output_mode == "count":
+            if not counts:
+                return f"No matches found for pattern in {target}"
+            paged, is_trunc = _paginate(matching_files, limit, offset)
+            lines = [f"{n}: {counts[n]}" for n in paged]
+            result = "\n".join(lines)
+            notes = []
+            if note := _pagination_note(limit, offset, is_trunc):
+                notes.append(note)
+            notes.append(f"(total matches: {sum(counts.values())} in {len(counts)} files)")
+            result += "\n\n" + "\n".join(notes)
+            return result
+
+        # Content mode
+        if not content_blocks:
+            return f"No matches found for pattern in {target}"
+        result = "\n\n".join(content_blocks)
+        notes = []
+        if truncated:
+            notes.append(f"(pagination: limit={limit}, offset={offset})")
+        elif size_truncated:
+            notes.append("(output truncated due to size)")
+        elif offset > 0:
+            notes.append(f"(pagination: offset={offset})")
+        if notes:
+            result += "\n\n" + "\n".join(notes)
+        return result
