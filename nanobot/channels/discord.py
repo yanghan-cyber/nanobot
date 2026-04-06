@@ -16,7 +16,7 @@ from nanobot.channels.base import BaseChannel
 from nanobot.command.builtin import build_help_text
 from nanobot.config.paths import get_media_dir
 from nanobot.config.schema import Base
-from nanobot.utils.helpers import safe_filename, split_message
+from nanobot.utils.helpers import native_path, safe_filename, split_message
 
 DISCORD_AVAILABLE = importlib.util.find_spec("discord") is not None
 if TYPE_CHECKING:
@@ -189,7 +189,7 @@ if DISCORD_AVAILABLE:
             mention_settings: discord.AllowedMentions,
         ) -> bool:
             """Send a file attachment via discord.py."""
-            path = Path(file_path)
+            path = native_path(file_path)
             if not path.is_file():
                 logger.warning("Discord file not found, skipping: {}", file_path)
                 return False

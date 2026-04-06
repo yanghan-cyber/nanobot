@@ -1,6 +1,7 @@
 """Feishu/Lark channel implementation using lark-oapi SDK with WebSocket long connection."""
 
 import asyncio
+import importlib.util
 import json
 import os
 import re
@@ -13,15 +14,14 @@ from pathlib import Path
 from typing import Any, Literal
 
 from loguru import logger
+from pydantic import Field
 
 from nanobot.bus.events import OutboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.channels.base import BaseChannel
 from nanobot.config.paths import get_media_dir
 from nanobot.config.schema import Base
-from pydantic import Field
-
-import importlib.util
+from nanobot.utils.helpers import native_path
 
 FEISHU_AVAILABLE = importlib.util.find_spec("lark_oapi") is not None
 
@@ -1196,7 +1196,8 @@ class FeishuChannel(BaseChannel):
                     # Fall back to regular send if reply fails
                 self._send_message_sync(receive_id_type, msg.chat_id, m_type, content)
 
-            for file_path in msg.media:
+            for file_ref in msg.media:
+                file_path = str(native_path(file_ref))
                 if not os.path.isfile(file_path):
                     logger.warning("Media file not found: {}", file_path)
                     continue

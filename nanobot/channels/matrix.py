@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import mimetypes
+import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -46,7 +47,7 @@ from nanobot.bus.queue import MessageBus
 from nanobot.channels.base import BaseChannel
 from nanobot.config.paths import get_data_dir, get_media_dir
 from nanobot.config.schema import Base
-from nanobot.utils.helpers import safe_filename
+from nanobot.utils.helpers import native_path, safe_filename
 
 TYPING_NOTICE_TIMEOUT_MS = 30_000
 # Must stay below TYPING_NOTICE_TIMEOUT_MS so the indicator doesn't expire mid-processing.
@@ -371,7 +372,7 @@ class MatrixChannel(BaseChannel):
         for raw in media:
             if not isinstance(raw, str) or not raw.strip():
                 continue
-            path = Path(raw.strip()).expanduser()
+            path = native_path(os.path.expanduser(raw.strip()))
             try:
                 key = str(path.resolve(strict=False))
             except OSError:
@@ -450,7 +451,7 @@ class MatrixChannel(BaseChannel):
         if not self.client:
             return _ATTACH_UPLOAD_FAILED.format(path.name or _DEFAULT_ATTACH_NAME)
 
-        resolved = path.expanduser().resolve(strict=False)
+        resolved = native_path(path.expanduser()).resolve(strict=False)
         filename = safe_filename(resolved.name) or _DEFAULT_ATTACH_NAME
         fail = _ATTACH_UPLOAD_FAILED.format(filename)
 

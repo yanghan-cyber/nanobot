@@ -38,6 +38,7 @@ from nanobot.bus.queue import MessageBus
 from nanobot.channels.base import BaseChannel
 from nanobot.config.schema import Base
 from nanobot.security.network import validate_url_target
+from nanobot.utils.helpers import get_home_dir, native_path
 
 try:
     from nanobot.config.paths import get_media_dir
@@ -181,9 +182,9 @@ class QQChannel(BaseChannel):
             try:
                 root = Path(get_media_dir("qq"))
             except Exception:
-                root = Path.home() / ".nanobot" / "media" / "qq"
+                root = get_home_dir() / ".nanobot" / "media" / "qq"
         else:
-            root = Path.home() / ".nanobot" / "media" / "qq"
+            root = get_home_dir() / ".nanobot" / "media" / "qq"
 
         root.mkdir(parents=True, exist_ok=True)
         logger.info("QQ media directory: {}", str(root))
@@ -376,9 +377,9 @@ class QQChannel(BaseChannel):
                     parsed = urlparse(media_ref)
                     # Windows: path in netloc; Unix: path in path
                     raw = parsed.path or parsed.netloc
-                    local_path = Path(unquote(raw))
+                    local_path = native_path(unquote(raw))
                 else:
-                    local_path = Path(os.path.expanduser(media_ref))
+                    local_path = native_path(os.path.expanduser(media_ref))
 
                 if not local_path.is_file():
                     logger.warning("QQ outbound media file not found: {}", str(local_path))

@@ -23,7 +23,7 @@ from nanobot.command.builtin import build_help_text
 from nanobot.config.paths import get_media_dir
 from nanobot.config.schema import Base
 from nanobot.security.network import validate_url_target
-from nanobot.utils.helpers import split_message
+from nanobot.utils.helpers import native_path, split_message
 
 TELEGRAM_MAX_MESSAGE_LEN = 4000  # Telegram message character limit
 TELEGRAM_REPLY_CONTEXT_MAX_LEN = TELEGRAM_MAX_MESSAGE_LEN  # Max length for reply context in user message
@@ -451,7 +451,7 @@ class TelegramChannel(BaseChannel):
                     )
                     continue
 
-                with open(media_path, "rb") as f:
+                with open(native_path(media_path), "rb") as f:
                     await sender(
                         chat_id=chat_id,
                         **{param: f},

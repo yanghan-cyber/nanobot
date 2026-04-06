@@ -9,6 +9,7 @@ import pydantic
 from loguru import logger
 
 from nanobot.config.schema import Config
+from nanobot.utils.helpers import get_home_dir
 
 # Global variable to store current config path (for multi-instance support)
 _current_config_path: Path | None = None
@@ -24,7 +25,7 @@ def get_config_path() -> Path:
     """Get the configuration file path."""
     if _current_config_path:
         return _current_config_path
-    return Path.home() / ".nanobot" / "config.json"
+    return get_home_dir() / ".nanobot" / "config.json"
 
 
 def load_config(config_path: Path | None = None) -> Config:

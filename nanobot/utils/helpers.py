@@ -2,8 +2,10 @@
 
 import base64
 import json
+import os
 import re
 import shutil
+import sys
 import time
 import uuid
 from datetime import datetime
@@ -51,6 +53,52 @@ def ensure_dir(path: Path) -> Path:
     """Ensure directory exists, return it."""
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def _msys_to_native(path_str: str) -> str | None:
+    """Convert an MSYS/Git Bash path to Windows-native format.
+
+    MSYS paths look like ``/c/Users/x`` which Python on Windows resolves
+    to ``C:\\c\\Users\\x`` (wrong) instead of ``C:\\Users\\x``.
+
+    Returns the native path string, or ``None`` if not an MSYS path.
+    """
+    if sys.platform != "win32":
+        return None
+    if not path_str.startswith("/") or len(path_str) < 3 or not path_str[1].isalpha():
+        return None
+    if len(path_str) == 3:
+        return f"{path_str[1].upper()}:\\"
+    if path_str[2] != "/":
+        return None
+    rest = path_str[3:].replace("/", "\\")
+    return f"{path_str[1].upper()}:\\{rest}"
+
+
+def get_home_dir() -> Path:
+    """Return the user's home directory in platform-native format.
+
+    On Windows with Git Bash/MSYS2, ``HOME`` may be set to Unix-style paths
+    like ``/c/Users/x`` which Python's ``pathlib`` resolves incorrectly.
+    This function converts MSYS paths to native Windows format.
+    """
+    home = os.environ.get("HOME", "")
+    native = _msys_to_native(home)
+    if native:
+        return Path(native)
+    return Path.home()
+
+
+def native_path(p: str | Path) -> Path:
+    """Convert a path to platform-native format.
+
+    On Windows, MSYS/Git Bash paths like ``/c/Users/x`` are converted to
+    native format ``C:\\Users\\x``.  Other paths pass through unchanged.
+    """
+    native = _msys_to_native(str(p))
+    if native:
+        return Path(native)
+    return p if isinstance(p, Path) else Path(p)
 
 
 def timestamp() -> str:

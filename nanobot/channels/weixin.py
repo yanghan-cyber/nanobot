@@ -32,7 +32,7 @@ from nanobot.bus.queue import MessageBus
 from nanobot.channels.base import BaseChannel
 from nanobot.config.paths import get_media_dir, get_runtime_subdir
 from nanobot.config.schema import Base
-from nanobot.utils.helpers import split_message
+from nanobot.utils.helpers import native_path, split_message
 
 # ---------------------------------------------------------------------------
 # Protocol constants (from openclaw-weixin types.ts)
@@ -1128,7 +1128,7 @@ class WeixinChannel(BaseChannel):
         4. Read ``x-encrypted-param`` header from CDN response as the download param.
         5. Send a ``sendmessage`` with the appropriate media item referencing the upload.
         """
-        p = Path(media_path)
+        p = native_path(media_path)
         if not p.is_file():
             raise FileNotFoundError(f"Media file not found: {media_path}")
 

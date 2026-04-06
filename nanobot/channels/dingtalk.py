@@ -17,6 +17,7 @@ from nanobot.bus.events import OutboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.channels.base import BaseChannel
 from nanobot.config.schema import Base
+from nanobot.utils.helpers import native_path
 
 try:
     from dingtalk_stream import (
@@ -316,9 +317,9 @@ class DingTalkChannel(BaseChannel):
         try:
             if media_ref.startswith("file://"):
                 parsed = urlparse(media_ref)
-                local_path = Path(unquote(parsed.path))
+                local_path = native_path(unquote(parsed.path))
             else:
-                local_path = Path(os.path.expanduser(media_ref))
+                local_path = native_path(os.path.expanduser(media_ref))
             if not local_path.is_file():
                 logger.warning("DingTalk media file not found: {}", local_path)
                 return None, None, None
