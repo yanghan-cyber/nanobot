@@ -14,6 +14,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from loguru import logger
+
 from nanobot.agent.tools.base import Tool, tool_parameters
 from nanobot.agent.tools.sandbox import wrap_command
 from nanobot.agent.tools.schema import (
@@ -184,21 +186,6 @@ async def _monitor_process(bg_id: str) -> None:
         _bg_processes.pop(bg_id, None)
 
 
-def _kill_process_tree(pid: int) -> None:
-    """Kill an entire process tree. Uses taskkill on Windows, kill on Unix."""
-    if sys.platform == "win32":
-        subprocess.run(
-            ["taskkill", "/F", "/T", "/PID", str(pid)],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-    else:
-        try:
-            os.kill(pid, 9)
-        except (ProcessLookupError, PermissionError):
-            pass
-
-
 # ---------------------------------------------------------------------------
 # BashTool
 # ---------------------------------------------------------------------------
@@ -299,12 +286,10 @@ class BashTool(Tool):
 
         effective_timeout = min(timeout or self.timeout, self._MAX_TIMEOUT)
 
-        env = os.environ.copy()
+        env = self._build_env()
+
         if self.path_append:
             env["PATH"] = env.get("PATH", "") + os.pathsep + self.path_append
-        # UTF-8 encoding enforcement
-        env["LANG"] = "C.UTF-8"
-        env["PYTHONIOENCODING"] = "utf-8"
 
         shell = self._resolve_shell()
 
@@ -338,12 +323,11 @@ class BashTool(Tool):
                     timeout=effective_timeout,
                 )
             except asyncio.TimeoutError:
-                _kill_process_tree(process.pid)
-                try:
-                    await asyncio.wait_for(process.wait(), timeout=5.0)
-                except asyncio.TimeoutError:
-                    pass
+                await self._kill_process(process)
                 return f"Error: Command timed out after {effective_timeout} seconds"
+            except asyncio.CancelledError:
+                await self._kill_process(process)
+                raise
 
             output_parts = []
 
@@ -418,6 +402,53 @@ class BashTool(Tool):
             f"Use `shell_bg(action='kill', bash_bg_id='{bg_id}')` to terminate.\n"
             f"Use `shell_bg(action='list')` to see all background tasks."
         )
+
+    @staticmethod
+    async def _kill_process(process: asyncio.subprocess.Process) -> None:
+        """Kill a subprocess tree and reap to prevent zombies."""
+        pid = process.pid
+        if sys.platform == "win32":
+            # taskkill /T kills the whole tree, /F forces it — use async to
+            # avoid blocking the event loop.
+            proc = await asyncio.create_subprocess_exec(
+                "taskkill", "/F", "/T", "/PID", str(pid),
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await proc.wait()
+        else:
+            try:
+                os.killpg(pid, 9)  # kill the whole process group
+            except (ProcessLookupError, PermissionError):
+                pass
+        # reap
+        try:
+            await asyncio.wait_for(process.wait(), timeout=5.0)
+        except asyncio.TimeoutError:
+            pass
+        finally:
+            if sys.platform != "win32":
+                try:
+                    os.waitpid(pid, os.WNOHANG)
+                except (ProcessLookupError, ChildProcessError):
+                    pass
+
+    def _build_env(self) -> dict[str, str]:
+        """Build a minimal environment for subprocess execution.
+
+        Uses HOME so that ``bash -l`` sources the user's profile (which sets
+        PATH and other essentials).  Only PATH is extended with *path_append*;
+        the parent process's environment is **not** inherited, preventing
+        secrets in env vars from leaking to LLM-generated commands.
+        """
+        home = os.environ.get("HOME", "/tmp")
+        return {
+            "HOME": home,
+            "LANG": os.environ.get("LANG", "C.UTF-8"),
+            "PATH": os.environ.get("PATH", ""),
+            "TERM": os.environ.get("TERM", "dumb"),
+            "PYTHONIOENCODING": "utf-8",
+        }
 
     @staticmethod
     def _resolve_shell() -> str:
@@ -622,7 +653,7 @@ class ShellBgTool(Tool):
         process = _bg_processes.get(bash_bg_id)
         if process and process.returncode is None:
             try:
-                _kill_process_tree(process.pid)
+                await BashTool._kill_process(process)
                 meta["status"] = "killed"
                 meta["end_time"] = datetime.now().isoformat()
 
@@ -637,4 +668,3 @@ class ShellBgTool(Tool):
                 return f"Error killing task: {e}"
 
         return f"Task '{bash_bg_id}' is not running (status: {meta.get('status', 'unknown')})"
-

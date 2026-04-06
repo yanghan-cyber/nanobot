@@ -167,8 +167,8 @@ class TestBashToolExecution:
             assert call_args[0][1] == "-c"
 
     @pytest.mark.asyncio
-    async def test_injects_utf8_env_vars(self):
-        """Should inject LANG=C.UTF-8 and PYTHONIOENCODING=utf-8."""
+    async def test_build_env_is_minimal(self):
+        """Should build a minimal env with HOME, LANG, PATH, TERM, PYTHONIOENCODING."""
         tool = BashTool()
         with patch("nanobot.agent.tools.shell.asyncio.create_subprocess_exec") as mock_exec:
             mock_process = AsyncMock()
@@ -182,6 +182,9 @@ class TestBashToolExecution:
             assert env is not None
             assert env.get("LANG") == "C.UTF-8"
             assert env.get("PYTHONIOENCODING") == "utf-8"
+            assert "HOME" in env
+            assert "PATH" in env
+            assert "TERM" in env
 
 
 # ---------------------------------------------------------------------------
@@ -190,7 +193,7 @@ class TestBashToolExecution:
 
 
 class TestWindowsTaskkill:
-    """On Windows, timeout should use taskkill /F /T /PID to kill process tree."""
+    """On Windows, timeout should use async taskkill /F /T /PID to kill process tree."""
 
     @pytest.mark.asyncio
     async def test_windows_timeout_uses_taskkill(self):
@@ -201,17 +204,31 @@ class TestWindowsTaskkill:
             mock_process.pid = 12345
             mock_process.wait = AsyncMock()
             mock_exec.return_value = mock_process
+
+            mock_taskkill = AsyncMock()
+            mock_taskkill.wait = AsyncMock()
+
+            def fake_create_subprocess_exec(*args, **kwargs):
+                if args[0] == "taskkill":
+                    return mock_taskkill
+                return mock_process
+
+            mock_exec.side_effect = fake_create_subprocess_exec
+
             with patch("nanobot.agent.tools.shell.sys") as mock_sys:
                 mock_sys.platform = "win32"
-                with patch("nanobot.agent.tools.shell.subprocess.run") as mock_run:
-                    with patch.object(tool, "_resolve_shell", return_value="/bin/bash"):
-                        result = await tool.execute(command="sleep 999", timeout=1)
-                    mock_run.assert_called_once()
-                    args = mock_run.call_args[0][0]
-                    assert args[0] == "taskkill"
-                    assert "/F" in args
-                    assert "/T" in args
-                    assert "12345" in args
+                with patch.object(tool, "_resolve_shell", return_value="/bin/bash"):
+                    result = await tool.execute(command="sleep 999", timeout=1)
+                # Verify taskkill was spawned with correct args
+                taskkill_calls = [
+                    c for c in mock_exec.call_args_list if c[0][0] == "taskkill"
+                ]
+                assert len(taskkill_calls) == 1
+                args = taskkill_calls[0][0]
+                assert args[0] == "taskkill"
+                assert "/F" in args
+                assert "/T" in args
+                assert "12345" in args
             assert "timed out" in result.lower()
 
 
@@ -511,8 +528,11 @@ class TestShellBgTool:
             "output_file": "/tmp/kill_test.log",
         }
         try:
-            with patch("nanobot.agent.tools.shell._kill_process_tree"):
+            with patch.object(
+                BashTool, "_kill_process", return_value=None
+            ) as mock_kill:
                 result = await tool.execute(action="kill", bash_bg_id=bg_id)
+                mock_kill.assert_called_once()
             assert "killed" in result.lower()
             assert bg_id in result
             mock_fh.close.assert_called_once()
@@ -551,8 +571,8 @@ class TestShellBgTool:
             _bg_meta.pop(bg_id, None)
 
     @pytest.mark.asyncio
-    async def test_kill_process_tree_exception(self):
-        """If _kill_process_tree throws, should return error message."""
+    async def test_kill_process_exception(self):
+        """If _kill_process throws, should return error message."""
         from nanobot.agent.tools.shell import ShellBgTool, _bg_meta, _bg_processes
 
         tool = ShellBgTool()
@@ -567,8 +587,8 @@ class TestShellBgTool:
             "output_file": "/tmp/kfail.log",
         }
         try:
-            with patch(
-                "nanobot.agent.tools.shell._kill_process_tree",
+            with patch.object(
+                BashTool, "_kill_process",
                 side_effect=PermissionError("access denied"),
             ):
                 result = await tool.execute(action="kill", bash_bg_id=bg_id)

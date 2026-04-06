@@ -554,7 +554,9 @@ async def test_exec_head_tail_truncation() -> None:
     # rules, so list2cmdline is appropriate there.
     script = "print('A' * 6000 + '\\n' + 'B' * 6000)"
     if sys.platform == "win32":
-        command = subprocess.list2cmdline([sys.executable, "-c", script])
+        # Git Bash needs Unix-style paths
+        python_path = sys.executable.replace("\\", "/")
+        command = f'"{python_path}" -c "{script}"'
     else:
         command = f"{shlex.quote(sys.executable)} -c {shlex.quote(script)}"
     result = await tool.execute(command=command)
