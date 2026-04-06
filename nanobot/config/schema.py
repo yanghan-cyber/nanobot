@@ -157,6 +157,7 @@ class WebSearchConfig(Base):
     api_key: str = ""
     base_url: str = ""  # SearXNG base URL
     max_results: int = 5
+    timeout: int = 30  # Wall-clock timeout (seconds) for search operations
 
 
 class WebToolsConfig(Base):
@@ -193,6 +194,7 @@ class BashToolConfig(Base):
     enable: bool = True
     timeout: int = 60
     path_append: str = ""
+    sandbox: str = ""  # sandbox backend: "" (none) or "bwrap"
     bg_ttl: str | int = "2h"  # TTL for completed bg task metadata (e.g. "120s", "120m", "2h")
     bg_max_entries: int = 128  # max completed bg task entries to keep
 

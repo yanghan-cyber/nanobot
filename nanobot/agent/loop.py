@@ -261,7 +261,7 @@ class AgentLoop:
 
     def _register_default_tools(self) -> None:
         """Register the default set of tools."""
-        allowed_dir = self.workspace if self.restrict_to_workspace else None
+        allowed_dir = self.workspace if (self.restrict_to_workspace or self.bash_config.sandbox) else None
         extra_read = [BUILTIN_SKILLS_DIR] if allowed_dir else None
         self.tools.register(
             ReadFileTool(
@@ -278,6 +278,7 @@ class AgentLoop:
                     working_dir=str(self.workspace),
                     timeout=self.bash_config.timeout,
                     restrict_to_workspace=self.restrict_to_workspace,
+                    sandbox=self.bash_config.sandbox,
                     path_append=self.bash_config.path_append,
                 )
             )
