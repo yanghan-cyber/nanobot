@@ -14,6 +14,8 @@ from loguru import logger
 
 from nanobot.agent.context import ContextBuilder
 from nanobot.agent.hook import AgentHook, AgentHookContext, CompositeHook
+from nanobot.agent.hooks.events import InternalHookEvent
+from nanobot.agent.hooks.registry import has_listeners, trigger_internal_hook
 from nanobot.agent.memory import Consolidator, Dream
 from nanobot.agent.runner import AgentRunner, AgentRunSpec
 from nanobot.agent.skills import BUILTIN_SKILLS_DIR
@@ -321,6 +323,16 @@ class AgentLoop:
         finally:
             self._mcp_connecting = False
 
+    async def _load_hooks(self) -> None:
+        """Load hooks from workspace hooks directory."""
+        from nanobot.agent.hooks.discovery import load_hooks
+
+        hooks_dir = self.workspace / "hooks"
+        if hooks_dir.is_dir():
+            count = await load_hooks(hooks_dir)
+            if count > 0:
+                logger.info("Loaded {} hooks from {}", count, hooks_dir)
+
     def _set_tool_context(self, channel: str, chat_id: str, message_id: str | None = None) -> None:
         """Update context for all tools that need routing info."""
         for name in ("message", "spawn", "cron"):
@@ -411,6 +423,7 @@ class AgentLoop:
         """Run the agent loop, dispatching messages as tasks to stay responsive to /stop."""
         self._running = True
         await self._connect_mcp()
+        await self._load_hooks()
         logger.info("Agent loop started")
 
         while self._running:
@@ -593,6 +606,19 @@ class AgentLoop:
 
         key = session_key or msg.session_key
         session = self.sessions.get_or_create(key)
+
+        # InternalHook: message:received
+        if has_listeners("message", "received"):
+            await trigger_internal_hook(InternalHookEvent.create(
+                "message", "received", key,
+                {
+                    "from": msg.sender_id,
+                    "content": msg.content,
+                    "channel": msg.channel,
+                    "chat_id": msg.chat_id,
+                },
+            ))
+
         if self._restore_runtime_checkpoint(session):
             self.sessions.save(session)
 
@@ -610,6 +636,18 @@ class AgentLoop:
                 message_tool.start_turn()
 
         history = session.get_history(max_messages=0)
+
+        # InternalHook: agent:bootstrap
+        bootstrap_event = InternalHookEvent.create(
+            "agent", "bootstrap", key,
+            {
+                "workspace_dir": str(self.workspace),
+                "session_key": key,
+            },
+        )
+        if has_listeners("agent", "bootstrap"):
+            await trigger_internal_hook(bootstrap_event)
+
         initial_messages = self.context.build_messages(
             history=history,
             current_message=msg.content,
@@ -655,6 +693,19 @@ class AgentLoop:
 
         preview = final_content[:120] + "..." if len(final_content) > 120 else final_content
         logger.info("Response to {}:{}: {}", msg.channel, msg.sender_id, preview)
+
+        # InternalHook: message:sent
+        if has_listeners("message", "sent"):
+            await trigger_internal_hook(InternalHookEvent.create(
+                "message", "sent", key,
+                {
+                    "to": msg.chat_id,
+                    "content": final_content,
+                    "success": True,
+                    "channel": msg.channel,
+                    "chat_id": msg.chat_id,
+                },
+            ))
 
         meta = dict(msg.metadata or {})
         if on_stream is not None:
