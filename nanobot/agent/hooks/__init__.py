@@ -20,6 +20,7 @@ Usage::
     await load_hooks(Path("workspace/hooks"))
 """
 
+from nanobot.agent.hooks.discovery import load_hooks
 from nanobot.agent.hooks.events import InternalHookEvent
 from nanobot.agent.hooks.registry import (
     clear_internal_hooks,
@@ -28,7 +29,6 @@ from nanobot.agent.hooks.registry import (
     trigger_internal_hook,
     unregister_internal_hook,
 )
-from nanobot.agent.hooks.discovery import load_hooks
 
 __all__ = [
     "InternalHookEvent",

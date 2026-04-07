@@ -45,13 +45,15 @@ def discover_hooks(hooks_dir: Path) -> list[dict]:
             logger.warning("Hook '{}' has no handler file in {}", frontmatter["name"], child)
             continue
 
-        entries.append({
-            "name": frontmatter["name"],
-            "description": frontmatter.get("description", ""),
-            "metadata": frontmatter.get("metadata", {}),
-            "hook_dir": child,
-            "handler_path": handler_path,
-        })
+        entries.append(
+            {
+                "name": frontmatter["name"],
+                "description": frontmatter.get("description", ""),
+                "metadata": frontmatter.get("metadata", {}),
+                "hook_dir": child,
+                "handler_path": handler_path,
+            }
+        )
 
     return entries
 
