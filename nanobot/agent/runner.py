@@ -10,6 +10,8 @@ from typing import Any
 from loguru import logger
 
 from nanobot.agent.hook import AgentHook, AgentHookContext
+from nanobot.agent.hooks.events import InternalHookEvent
+from nanobot.agent.hooks.registry import has_listeners, trigger_internal_hook
 from nanobot.utils.prompt_templates import render_template
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.providers.base import LLMProvider, ToolCallRequest
@@ -428,6 +430,14 @@ class AgentRunner:
                 "detail": prep_error.split(": ", 1)[-1][:120],
             }
             return prep_error + _HINT, event, RuntimeError(prep_error) if spec.fail_on_tool_error else None
+
+        # InternalHook: tool:before_call
+        if has_listeners("tool", "before_call"):
+            await trigger_internal_hook(InternalHookEvent.create(
+                "tool", "before_call", spec.session_key or "",
+                {"tool_name": tool_call.name, "arguments": tool_call.arguments},
+            ))
+
         try:
             if tool is not None:
                 result = await tool.execute(**params)
@@ -444,6 +454,13 @@ class AgentRunner:
             if spec.fail_on_tool_error:
                 return f"Error: {type(exc).__name__}: {exc}", event, exc
             return f"Error: {type(exc).__name__}: {exc}", event, None
+
+        # InternalHook: tool:after_call
+        if has_listeners("tool", "after_call"):
+            await trigger_internal_hook(InternalHookEvent.create(
+                "tool", "after_call", spec.session_key or "",
+                {"tool_name": tool_call.name, "arguments": tool_call.arguments, "result": result},
+            ))
 
         if isinstance(result, str) and result.startswith("Error"):
             event = {
