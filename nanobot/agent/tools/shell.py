@@ -176,7 +176,9 @@ async def _monitor_process(bg_id: str) -> None:
 
     try:
         exit_code = await process.wait()
-        meta["status"] = "completed" if exit_code == 0 else "failed"
+        # Don't overwrite if _kill() already set status to "killed"
+        if meta.get("status") != "killed":
+            meta["status"] = "completed" if exit_code == 0 else "failed"
         meta["exit_code"] = exit_code
         meta["end_time"] = datetime.now().isoformat()
     finally:
@@ -651,10 +653,13 @@ class ShellBgTool(Tool):
             return f"Error: Task '{bash_bg_id}' not found"
 
         process = _bg_processes.get(bash_bg_id)
+
+        # --- Branch A: process still running, perform kill ---
         if process and process.returncode is None:
             try:
                 await BashTool._kill_process(process)
                 meta["status"] = "killed"
+                meta["exit_code"] = process.returncode
                 meta["end_time"] = datetime.now().isoformat()
 
                 fh = _bg_file_handles.pop(bash_bg_id, None)
@@ -662,9 +667,25 @@ class ShellBgTool(Tool):
                     fh.close()
                 _bg_processes.pop(bash_bg_id, None)
 
-                return f"Task '{bash_bg_id}' killed successfully."
+                return f"Task '{bash_bg_id}' killed."
 
             except Exception as e:
                 return f"Error killing task: {e}"
 
-        return f"Task '{bash_bg_id}' is not running (status: {meta.get('status', 'unknown')})"
+        # --- Branch B: process already dead ---
+        if meta.get("status") == "running":
+            rc = process.returncode if process else None
+            meta["status"] = "completed" if rc == 0 else "failed"
+            meta["exit_code"] = rc
+            if not meta.get("end_time"):
+                meta["end_time"] = datetime.now().isoformat()
+            _bg_processes.pop(bash_bg_id, None)
+            fh = _bg_file_handles.pop(bash_bg_id, None)
+            if fh:
+                fh.close()
+
+        status = meta.get("status", "unknown")
+        return (
+            f"Task '{bash_bg_id}' already finished (status: {status}). "
+            f"Use `shell_bg(action='output', bash_bg_id='{bash_bg_id}')` to view output."
+        )
