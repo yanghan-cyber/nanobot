@@ -61,6 +61,15 @@ class DreamConfig(Base):
         return f"every {hours}h"
 
 
+class HooksConfig(Base):
+    """Hook system configuration. Aligned with OpenClaw's hooks config."""
+
+    enabled: bool = True
+    dirs: list[str] = Field(default_factory=list)  # Additional hook directories to scan
+    allow: list[str] = Field(default_factory=list)  # Only load these hooks (empty = all)
+    deny: list[str] = Field(default_factory=list)  # Never load these hooks
+
+
 class AgentDefaults(Base):
     """Default agent configuration."""
 
@@ -233,6 +242,7 @@ class Config(BaseSettings):
     api: ApiConfig = Field(default_factory=ApiConfig)
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
+    hooks: HooksConfig = Field(default_factory=HooksConfig)
 
     @property
     def workspace_path(self) -> Path:
