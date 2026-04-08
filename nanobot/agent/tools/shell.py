@@ -192,6 +192,8 @@ async def _monitor_process(bg_id: str) -> None:
 # BashTool
 # ---------------------------------------------------------------------------
 
+_IS_WINDOWS = sys.platform == "win32"
+
 
 @tool_parameters(
     tool_parameters_schema(
@@ -261,7 +263,13 @@ class BashTool(Tool):
 
     @property
     def description(self) -> str:
-        return "Execute a shell command and return its output. Use with caution."
+        return (
+            "Execute a shell command and return its output. "
+            "Prefer read_file/write_file/edit_file over cat/echo/sed, "
+            "and grep/glob over shell find/grep. "
+            "Use -y or --yes flags to avoid interactive prompts. "
+            "Output is truncated at 10 000 chars; timeout defaults to 60s."
+        )
 
     @property
     def exclusive(self) -> bool:
@@ -282,12 +290,17 @@ class BashTool(Tool):
             return guard_error
 
         if self.sandbox:
-            workspace = self.working_dir or cwd
-            command = wrap_command(self.sandbox, command, workspace, cwd)
-            cwd = str(Path(workspace).resolve())
+            if _IS_WINDOWS:
+                logger.warning(
+                    "Sandbox '{}' is not supported on Windows; running unsandboxed",
+                    self.sandbox,
+                )
+            else:
+                workspace = self.working_dir or cwd
+                command = wrap_command(self.sandbox, command, workspace, cwd)
+                cwd = str(Path(workspace).resolve())
 
         effective_timeout = min(timeout or self.timeout, self._MAX_TIMEOUT)
-
         env = self._build_env()
 
         if self.path_append:
@@ -345,7 +358,6 @@ class BashTool(Tool):
 
             result = "\n".join(output_parts) if output_parts else "(no output)"
 
-            # Head + tail truncation to preserve both start and end of output
             max_len = self._MAX_OUTPUT
             if len(result) > max_len:
                 half = max_len // 2
@@ -429,7 +441,7 @@ class BashTool(Tool):
         except asyncio.TimeoutError:
             pass
         finally:
-            if sys.platform != "win32":
+            if not _IS_WINDOWS:
                 try:
                     os.waitpid(pid, os.WNOHANG)
                 except (ProcessLookupError, ChildProcessError):
@@ -438,11 +450,26 @@ class BashTool(Tool):
     def _build_env(self) -> dict[str, str]:
         """Build a minimal environment for subprocess execution.
 
-        Uses HOME so that ``bash -l`` sources the user's profile (which sets
-        PATH and other essentials).  Only PATH is extended with *path_append*;
-        the parent process's environment is **not** inherited, preventing
-        secrets in env vars from leaking to LLM-generated commands.
+        On Unix, only HOME/LANG/TERM are passed; ``bash -l`` sources the
+        user's profile which sets PATH and other essentials.
+
+        On Windows, ``cmd.exe`` has no login-profile mechanism, so a curated
+        set of system variables (including PATH) is forwarded.  API keys and
+        other secrets are still excluded.
         """
+        if _IS_WINDOWS:
+            sr = os.environ.get("SYSTEMROOT", r"C:\Windows")
+            return {
+                "SYSTEMROOT": sr,
+                "COMSPEC": os.environ.get("COMSPEC", f"{sr}\\system32\\cmd.exe"),
+                "USERPROFILE": os.environ.get("USERPROFILE", ""),
+                "HOMEDRIVE": os.environ.get("HOMEDRIVE", "C:"),
+                "HOMEPATH": os.environ.get("HOMEPATH", "\\"),
+                "TEMP": os.environ.get("TEMP", f"{sr}\\Temp"),
+                "TMP": os.environ.get("TMP", f"{sr}\\Temp"),
+                "PATHEXT": os.environ.get("PATHEXT", ".COM;.EXE;.BAT;.CMD"),
+                "PATH": os.environ.get("PATH", f"{sr}\\system32;{sr}"),
+            }
         home = os.environ.get("HOME", "/tmp")
         return {
             "HOME": home,

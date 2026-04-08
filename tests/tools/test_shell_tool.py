@@ -170,21 +170,24 @@ class TestBashToolExecution:
     async def test_build_env_is_minimal(self):
         """Should build a minimal env with HOME, LANG, PATH, TERM, PYTHONIOENCODING."""
         tool = BashTool()
-        with patch("nanobot.agent.tools.shell.asyncio.create_subprocess_exec") as mock_exec:
+        with (
+            patch("nanobot.agent.tools.shell._IS_WINDOWS", False),
+            patch("nanobot.agent.tools.shell.asyncio.create_subprocess_exec") as mock_exec,
+        ):
             mock_process = AsyncMock()
             mock_process.communicate.return_value = (b"hello\n", b"")
             mock_process.returncode = 0
             mock_exec.return_value = mock_process
             with patch.object(tool, "_resolve_shell", return_value="/bin/bash"):
                 await tool.execute(command="echo hello")
-            call_kwargs = mock_exec.call_args
-            env = call_kwargs.kwargs.get("env") or call_kwargs[1].get("env")
-            assert env is not None
-            assert env.get("LANG") == "C.UTF-8"
-            assert env.get("PYTHONIOENCODING") == "utf-8"
-            assert "HOME" in env
-            assert "PATH" in env
-            assert "TERM" in env
+                call_kwargs = mock_exec.call_args
+                env = call_kwargs.kwargs.get("env") or call_kwargs[1].get("env")
+                assert env is not None
+                assert env.get("LANG") == "C.UTF-8"
+                assert env.get("PYTHONIOENCODING") == "utf-8"
+                assert "HOME" in env
+                assert "PATH" in env
+                assert "TERM" in env
 
 
 # ---------------------------------------------------------------------------
@@ -565,7 +568,7 @@ class TestShellBgTool:
         # No entry in _bg_processes (already cleaned up)
         try:
             result = await tool.execute(action="kill", bash_bg_id=bg_id)
-            assert "not running" in result.lower()
+            assert "already finished" in result.lower()
             assert "completed" in result
         finally:
             _bg_meta.pop(bg_id, None)

@@ -63,6 +63,7 @@ class GlobTool(_SearchTool):
             "Fast file pattern matching tool powered by ripgrep. "
             "Supports glob patterns like '**/*.js' or 'src/**/*.ts'. "
             "Returns matching file paths sorted by modification time (newest first). "
+            "Skips .git, node_modules, __pycache__, and other noise directories. "
             "Use this tool when you need to find files by name patterns. "
             "When doing open-ended searches needing multiple rounds of "
             "globbing and grepping, use subagent instead."
@@ -188,6 +189,7 @@ class GrepTool(_SearchTool):
             "Output modes: 'content' shows matching lines with context; "
             "'files_with_matches' shows only file paths (default); "
             "'count' shows per-file match counts. "
+            "Skips binary and files >2 MB. Supports glob/type filtering. "
             "Multiline matching: by default patterns match within single lines only. "
             "For cross-line patterns, use multiline=true."
         )
