@@ -228,3 +228,14 @@ async def test_load_hooks_dirs_scans_extra_directories(tmp_path):
     count = await load_hooks(hooks_dir, cfg=cfg)
     assert count == 2
     assert has_listeners("agent", "bootstrap")
+
+
+@pytest.mark.asyncio
+async def test_load_hooks_deny_overrides_allow(tmp_path):
+    """When a hook is in both allow and deny, deny wins."""
+    hooks_dir = tmp_path / "hooks"
+    _make_hook(hooks_dir, "hook-a")
+    _make_hook(hooks_dir, "hook-b")
+    cfg = HooksConfig(allow=["hook-a", "hook-b"], deny=["hook-a"])
+    count = await load_hooks(hooks_dir, cfg=cfg)
+    assert count == 1
