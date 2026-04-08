@@ -28,6 +28,13 @@ from nanobot.agent.hooks.events import (
     MessageSentContext,
     ToolCallContext,
 )
+from nanobot.agent.hooks.guards import (
+    is_agent_bootstrap_event,
+    is_message_received_event,
+    is_message_sent_event,
+    is_tool_after_call_event,
+    is_tool_before_call_event,
+)
 from nanobot.agent.hooks.registry import (
     clear_internal_hooks,
     has_listeners,
@@ -48,4 +55,9 @@ __all__ = [
     "clear_internal_hooks",
     "has_listeners",
     "load_hooks",
+    "is_agent_bootstrap_event",
+    "is_message_received_event",
+    "is_message_sent_event",
+    "is_tool_before_call_event",
+    "is_tool_after_call_event",
 ]
