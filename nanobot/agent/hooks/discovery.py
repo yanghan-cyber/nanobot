@@ -156,7 +156,11 @@ def _find_handler(hook_dir: Path) -> Path | None:
 
 def _load_handler(path: Path, export_name: str = "handler"):
     """Dynamically import a Python module and extract the handler function."""
-    module_name = f"nanobot_hook_{path.stem}_{id(path)}"
+    # Use a stable identifier based on the resolved absolute path to avoid
+    # collisions when Python reuses memory addresses after GC.
+    resolved = str(path.resolve())
+    stable_id = hex(hash(resolved) & 0xFFFFFFFF)[2:]
+    module_name = f"nanobot_hook_{path.stem}_{stable_id}"
 
     spec = importlib.util.spec_from_file_location(module_name, str(path))
     if spec is None or spec.loader is None:
