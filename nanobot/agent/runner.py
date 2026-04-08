@@ -455,12 +455,13 @@ class AgentRunner:
             )
 
         # InternalHook: tool:before_call
+        _session_key = spec.session_key or ""
         if has_listeners(TOOL, BEFORE_CALL):
             ctx = asdict(ToolCallContext(
                 tool_name=tool_call.name,
                 arguments=tool_call.arguments,
             ))
-            await trigger_internal_hook(InternalHookEvent.create(TOOL, BEFORE_CALL, spec.session_key or "", ctx))
+            await trigger_internal_hook(InternalHookEvent.create(TOOL, BEFORE_CALL, _session_key, ctx))
 
         tool_result = None
         tool_error: BaseException | None = None
@@ -488,7 +489,7 @@ class AgentRunner:
                     arguments=tool_call.arguments,
                     result=tool_result,
                 ))
-            await trigger_internal_hook(InternalHookEvent.create(TOOL, AFTER_CALL, spec.session_key or "", after_ctx))
+            await trigger_internal_hook(InternalHookEvent.create(TOOL, AFTER_CALL, _session_key, after_ctx))
 
         if tool_error is not None:
             event = {

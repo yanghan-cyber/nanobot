@@ -684,14 +684,14 @@ class AgentLoop:
         history = session.get_history(max_messages=0)
 
         # InternalHook: agent:bootstrap
-        bootstrap_files = self._collect_bootstrap_files()
-        bootstrap_ctx = asdict(AgentBootstrapContext(
-            workspace_dir=str(self.workspace),
-            bootstrap_files=bootstrap_files,
-            session_key=key,
-        ))
-        bootstrap_event = InternalHookEvent.create(AGENT, BOOTSTRAP, key, bootstrap_ctx)
         if has_listeners(AGENT, BOOTSTRAP):
+            bootstrap_files = self._collect_bootstrap_files()
+            bootstrap_ctx = asdict(AgentBootstrapContext(
+                workspace_dir=str(self.workspace),
+                bootstrap_files=bootstrap_files,
+                session_key=key,
+            ))
+            bootstrap_event = InternalHookEvent.create(AGENT, BOOTSTRAP, key, bootstrap_ctx)
             await trigger_internal_hook(bootstrap_event)
             # Read back mutations from hooks
             self._apply_bootstrap_overrides(bootstrap_event)

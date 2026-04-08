@@ -22,7 +22,7 @@ SENT: str = "sent"
 BEFORE_CALL: str = "before_call"
 AFTER_CALL: str = "after_call"
 
-# Compound keys (for register / unregister)
+# Compound keys
 AGENT_BOOTSTRAP: str = "agent:bootstrap"
 MESSAGE_RECEIVED: str = "message:received"
 MESSAGE_SENT: str = "message:sent"
