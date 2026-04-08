@@ -344,6 +344,26 @@ class AgentLoop:
         if count > 0:
             logger.info("Loaded {} hooks from {}", count, hooks_dir)
 
+    def _collect_bootstrap_files(self) -> list[dict[str, str]]:
+        """Collect existing bootstrap files from workspace for hook context."""
+        from nanobot.agent.context import ContextBuilder
+
+        files = []
+        for filename in ContextBuilder.BOOTSTRAP_FILES:
+            file_path = self.workspace / filename
+            if file_path.exists():
+                files.append({"path": filename, "content": file_path.read_text(encoding="utf-8")})
+        return files
+
+    def _apply_bootstrap_overrides(self, event: InternalHookEvent) -> None:
+        """Apply bootstrap file mutations from hook handlers to context builder."""
+        override_files = event.context.get("bootstrap_files")
+        if not override_files:
+            return
+        extra = [f for f in override_files if f.get("virtual")]
+        for f in extra:
+            self.context.add_virtual_bootstrap(f["path"], f.get("content", ""))
+
     def _set_tool_context(self, channel: str, chat_id: str, message_id: str | None = None) -> None:
         """Update context for all tools that need routing info."""
         for name in ("message", "spawn", "cron"):
@@ -653,6 +673,7 @@ class AgentLoop:
         history = session.get_history(max_messages=0)
 
         # InternalHook: agent:bootstrap
+        bootstrap_files = self._collect_bootstrap_files()
         bootstrap_event = InternalHookEvent.create(
             "agent",
             "bootstrap",
@@ -660,10 +681,13 @@ class AgentLoop:
             {
                 "workspace_dir": str(self.workspace),
                 "session_key": key,
+                "bootstrap_files": bootstrap_files,
             },
         )
         if has_listeners("agent", "bootstrap"):
             await trigger_internal_hook(bootstrap_event)
+            # Read back mutations from hooks
+            self._apply_bootstrap_overrides(bootstrap_event)
 
         initial_messages = self.context.build_messages(
             history=history,

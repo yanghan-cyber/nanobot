@@ -6,12 +6,10 @@ import platform
 from pathlib import Path
 from typing import Any
 
-from nanobot.utils.helpers import current_time_str
-
 from nanobot.agent.memory import MemoryStore
-from nanobot.utils.prompt_templates import render_template
 from nanobot.agent.skills import SkillsLoader
-from nanobot.utils.helpers import build_assistant_message, detect_image_mime
+from nanobot.utils.helpers import build_assistant_message, current_time_str, detect_image_mime
+from nanobot.utils.prompt_templates import render_template
 
 
 class ContextBuilder:
@@ -25,6 +23,7 @@ class ContextBuilder:
         self.timezone = timezone
         self.memory = MemoryStore(workspace)
         self.skills = SkillsLoader(workspace)
+        self._virtual_bootstrap: list[dict[str, str]] = []
 
     def build_system_prompt(self, skill_names: list[str] | None = None) -> str:
         """Build the system prompt from identity, bootstrap files, memory, and skills."""
@@ -65,7 +64,9 @@ class ContextBuilder:
 
     @staticmethod
     def _build_runtime_context(
-        channel: str | None, chat_id: str | None, timezone: str | None = None,
+        channel: str | None,
+        chat_id: str | None,
+        timezone: str | None = None,
     ) -> str:
         """Build untrusted runtime metadata block for injection before the user message."""
         lines = [f"Current Time: {current_time_str(timezone)}"]
@@ -80,7 +81,10 @@ class ContextBuilder:
 
         def _to_blocks(value: Any) -> list[dict[str, Any]]:
             if isinstance(value, list):
-                return [item if isinstance(item, dict) else {"type": "text", "text": str(item)} for item in value]
+                return [
+                    item if isinstance(item, dict) else {"type": "text", "text": str(item)}
+                    for item in value
+                ]
             if value is None:
                 return []
             return [{"type": "text", "text": str(value)}]
@@ -97,7 +101,15 @@ class ContextBuilder:
                 content = file_path.read_text(encoding="utf-8")
                 parts.append(f"## {filename}\n\n{content}")
 
+        # Include virtual bootstrap files injected by hooks
+        for vf in self._virtual_bootstrap:
+            parts.append(f"## {vf['path']}\n\n{vf['content']}")
+
         return "\n\n".join(parts) if parts else ""
+
+    def add_virtual_bootstrap(self, path: str, content: str) -> None:
+        """Add a virtual bootstrap file injected by a hook handler."""
+        self._virtual_bootstrap.append({"path": path, "content": content})
 
     def build_messages(
         self,
@@ -147,36 +159,46 @@ class ContextBuilder:
             if not mime or not mime.startswith("image/"):
                 continue
             b64 = base64.b64encode(raw).decode()
-            images.append({
-                "type": "image_url",
-                "image_url": {"url": f"data:{mime};base64,{b64}"},
-                "_meta": {"path": str(p)},
-            })
+            images.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{mime};base64,{b64}"},
+                    "_meta": {"path": str(p)},
+                }
+            )
 
         if not images:
             return text
         return images + [{"type": "text", "text": text}]
 
     def add_tool_result(
-        self, messages: list[dict[str, Any]],
-        tool_call_id: str, tool_name: str, result: Any,
+        self,
+        messages: list[dict[str, Any]],
+        tool_call_id: str,
+        tool_name: str,
+        result: Any,
     ) -> list[dict[str, Any]]:
         """Add a tool result to the message list."""
-        messages.append({"role": "tool", "tool_call_id": tool_call_id, "name": tool_name, "content": result})
+        messages.append(
+            {"role": "tool", "tool_call_id": tool_call_id, "name": tool_name, "content": result}
+        )
         return messages
 
     def add_assistant_message(
-        self, messages: list[dict[str, Any]],
+        self,
+        messages: list[dict[str, Any]],
         content: str | None,
         tool_calls: list[dict[str, Any]] | None = None,
         reasoning_content: str | None = None,
         thinking_blocks: list[dict] | None = None,
     ) -> list[dict[str, Any]]:
         """Add an assistant message to the message list."""
-        messages.append(build_assistant_message(
-            content,
-            tool_calls=tool_calls,
-            reasoning_content=reasoning_content,
-            thinking_blocks=thinking_blocks,
-        ))
+        messages.append(
+            build_assistant_message(
+                content,
+                tool_calls=tool_calls,
+                reasoning_content=reasoning_content,
+                thinking_blocks=thinking_blocks,
+            )
+        )
         return messages
