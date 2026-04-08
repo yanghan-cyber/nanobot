@@ -7,6 +7,7 @@ import json
 import os
 import time
 from contextlib import AsyncExitStack, nullcontext
+from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
@@ -20,7 +21,10 @@ from nanobot.agent.hooks.events import (
     MESSAGE,
     RECEIVED,
     SENT,
+    AgentBootstrapContext,
     InternalHookEvent,
+    MessageReceivedContext,
+    MessageSentContext,
 )
 from nanobot.agent.hooks.registry import has_listeners, trigger_internal_hook
 from nanobot.agent.memory import Consolidator, Dream
@@ -653,19 +657,13 @@ class AgentLoop:
 
         # InternalHook: message:received
         if has_listeners(MESSAGE, RECEIVED):
-            await trigger_internal_hook(
-                InternalHookEvent.create(
-                    MESSAGE,
-                    RECEIVED,
-                    key,
-                    {
-                        "from_": msg.sender_id,
-                        "content": msg.content,
-                        "channel_id": msg.channel,
-                        "conversation_id": msg.chat_id,
-                    },
-                )
-            )
+            ctx = asdict(MessageReceivedContext(
+                from_=msg.sender_id,
+                content=msg.content,
+                channel_id=msg.channel,
+                conversation_id=msg.chat_id,
+            ))
+            await trigger_internal_hook(InternalHookEvent.create(MESSAGE, RECEIVED, key, ctx))
 
         if self._restore_runtime_checkpoint(session):
             self.sessions.save(session)
@@ -687,16 +685,12 @@ class AgentLoop:
 
         # InternalHook: agent:bootstrap
         bootstrap_files = self._collect_bootstrap_files()
-        bootstrap_event = InternalHookEvent.create(
-            AGENT,
-            BOOTSTRAP,
-            key,
-            {
-                "workspace_dir": str(self.workspace),
-                "session_key": key,
-                "bootstrap_files": bootstrap_files,
-            },
-        )
+        bootstrap_ctx = asdict(AgentBootstrapContext(
+            workspace_dir=str(self.workspace),
+            bootstrap_files=bootstrap_files,
+            session_key=key,
+        ))
+        bootstrap_event = InternalHookEvent.create(AGENT, BOOTSTRAP, key, bootstrap_ctx)
         if has_listeners(AGENT, BOOTSTRAP):
             await trigger_internal_hook(bootstrap_event)
             # Read back mutations from hooks
@@ -750,20 +744,14 @@ class AgentLoop:
 
         # InternalHook: message:sent
         if has_listeners(MESSAGE, SENT):
-            await trigger_internal_hook(
-                InternalHookEvent.create(
-                    MESSAGE,
-                    SENT,
-                    key,
-                    {
-                        "to": msg.chat_id,
-                        "content": final_content,
-                        "success": True,
-                        "channel_id": msg.channel,
-                        "conversation_id": msg.chat_id,
-                    },
-                )
-            )
+            ctx = asdict(MessageSentContext(
+                to=msg.chat_id,
+                content=final_content,
+                success=True,
+                channel_id=msg.channel,
+                conversation_id=msg.chat_id,
+            ))
+            await trigger_internal_hook(InternalHookEvent.create(MESSAGE, SENT, key, ctx))
 
         meta = dict(msg.metadata or {})
         if on_stream is not None:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +15,7 @@ from nanobot.agent.hooks.events import (
     BEFORE_CALL,
     TOOL,
     InternalHookEvent,
+    ToolCallContext,
 )
 from nanobot.agent.hooks.registry import has_listeners, trigger_internal_hook
 from nanobot.agent.tools.registry import ToolRegistry
@@ -455,14 +456,11 @@ class AgentRunner:
 
         # InternalHook: tool:before_call
         if has_listeners(TOOL, BEFORE_CALL):
-            await trigger_internal_hook(
-                InternalHookEvent.create(
-                    TOOL,
-                    BEFORE_CALL,
-                    spec.session_key or "",
-                    {"tool_name": tool_call.name, "arguments": tool_call.arguments},
-                )
-            )
+            ctx = asdict(ToolCallContext(
+                tool_name=tool_call.name,
+                arguments=tool_call.arguments,
+            ))
+            await trigger_internal_hook(InternalHookEvent.create(TOOL, BEFORE_CALL, spec.session_key or "", ctx))
 
         tool_result = None
         tool_error: BaseException | None = None
@@ -478,17 +476,19 @@ class AgentRunner:
 
         # InternalHook: tool:after_call (fires for both success and error)
         if has_listeners(TOOL, AFTER_CALL):
-            after_ctx = {
-                "tool_name": tool_call.name,
-                "arguments": tool_call.arguments,
-            }
             if tool_error is not None:
-                after_ctx["error"] = str(tool_error)
+                after_ctx = asdict(ToolCallContext(
+                    tool_name=tool_call.name,
+                    arguments=tool_call.arguments,
+                    error=str(tool_error),
+                ))
             else:
-                after_ctx["result"] = tool_result
-            await trigger_internal_hook(
-                InternalHookEvent.create(TOOL, AFTER_CALL, spec.session_key or "", after_ctx)
-            )
+                after_ctx = asdict(ToolCallContext(
+                    tool_name=tool_call.name,
+                    arguments=tool_call.arguments,
+                    result=tool_result,
+                ))
+            await trigger_internal_hook(InternalHookEvent.create(TOOL, AFTER_CALL, spec.session_key or "", after_ctx))
 
         if tool_error is not None:
             event = {
