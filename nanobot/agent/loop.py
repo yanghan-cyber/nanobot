@@ -646,10 +646,10 @@ class AgentLoop:
                     "received",
                     key,
                     {
-                        "from": msg.sender_id,
+                        "from_": msg.sender_id,
                         "content": msg.content,
-                        "channel": msg.channel,
-                        "chat_id": msg.chat_id,
+                        "channel_id": msg.channel,
+                        "conversation_id": msg.chat_id,
                     },
                 )
             )
@@ -746,8 +746,8 @@ class AgentLoop:
                         "to": msg.chat_id,
                         "content": final_content,
                         "success": True,
-                        "channel": msg.channel,
-                        "chat_id": msg.chat_id,
+                        "channel_id": msg.channel,
+                        "conversation_id": msg.chat_id,
                     },
                 )
             )
