@@ -38,7 +38,7 @@ from nanobot.utils.helpers import image_placeholder_text, truncate_text
 from nanobot.utils.runtime import EMPTY_FINAL_RESPONSE_MESSAGE
 
 if TYPE_CHECKING:
-    from nanobot.config.schema import BashToolConfig, ChannelsConfig, WebToolsConfig
+    from nanobot.config.schema import BashToolConfig, ChannelsConfig, HooksConfig, WebToolsConfig
     from nanobot.cron.service import CronService
 
 
@@ -182,6 +182,7 @@ class AgentLoop:
         channels_config: ChannelsConfig | None = None,
         timezone: str | None = None,
         hooks: list[AgentHook] | None = None,
+        hooks_config: HooksConfig | None = None,
     ):
         from nanobot.config.schema import BashToolConfig, WebToolsConfig
 
@@ -213,6 +214,7 @@ class AgentLoop:
         self._start_time = time.time()
         self._last_usage: dict[str, int] = {}
         self._extra_hooks: list[AgentHook] = hooks or []
+        self._hooks_config = hooks_config
 
         self.context = ContextBuilder(workspace, timezone=timezone)
         self.sessions = session_manager or SessionManager(workspace)
@@ -263,7 +265,9 @@ class AgentLoop:
 
     def _register_default_tools(self) -> None:
         """Register the default set of tools."""
-        allowed_dir = self.workspace if (self.restrict_to_workspace or self.bash_config.sandbox) else None
+        allowed_dir = (
+            self.workspace if (self.restrict_to_workspace or self.bash_config.sandbox) else None
+        )
         extra_read = [BUILTIN_SKILLS_DIR] if allowed_dir else None
         self.tools.register(
             ReadFileTool(
@@ -284,10 +288,12 @@ class AgentLoop:
                     path_append=self.bash_config.path_append,
                 )
             )
-            self.tools.register(ShellBgTool(
-                bg_ttl_minutes=self.bash_config.bg_ttl_minutes(),
-                bg_max_entries=self.bash_config.bg_max_entries,
-            ))
+            self.tools.register(
+                ShellBgTool(
+                    bg_ttl_minutes=self.bash_config.bg_ttl_minutes(),
+                    bg_max_entries=self.bash_config.bg_max_entries,
+                )
+            )
         if self.web_config.enable:
             self.tools.register(
                 WebSearchTool(config=self.web_config.search, proxy=self.web_config.proxy)
@@ -324,14 +330,19 @@ class AgentLoop:
             self._mcp_connecting = False
 
     async def _load_hooks(self) -> None:
-        """Load hooks from workspace hooks directory."""
+        """Load hooks from workspace hooks directory and configured extra dirs."""
         from nanobot.agent.hooks.discovery import load_hooks
+        from nanobot.config.schema import HooksConfig
 
         hooks_dir = self.workspace / "hooks"
-        if hooks_dir.is_dir():
-            count = await load_hooks(hooks_dir)
-            if count > 0:
-                logger.info("Loaded {} hooks from {}", count, hooks_dir)
+        cfg = self._hooks_config or HooksConfig()
+
+        if not hooks_dir.is_dir() and not cfg.dirs:
+            return
+
+        count = await load_hooks(hooks_dir, cfg=cfg)
+        if count > 0:
+            logger.info("Loaded {} hooks from {}", count, hooks_dir)
 
     def _set_tool_context(self, channel: str, chat_id: str, message_id: str | None = None) -> None:
         """Update context for all tools that need routing info."""
@@ -428,7 +439,7 @@ class AgentLoop:
 
         while self._running:
             try:
-                    msg = await asyncio.wait_for(self.bus.consume_inbound(), timeout=1.0)
+                msg = await asyncio.wait_for(self.bus.consume_inbound(), timeout=1.0)
             except asyncio.TimeoutError:
                 continue
             except asyncio.CancelledError:
@@ -609,15 +620,19 @@ class AgentLoop:
 
         # InternalHook: message:received
         if has_listeners("message", "received"):
-            await trigger_internal_hook(InternalHookEvent.create(
-                "message", "received", key,
-                {
-                    "from": msg.sender_id,
-                    "content": msg.content,
-                    "channel": msg.channel,
-                    "chat_id": msg.chat_id,
-                },
-            ))
+            await trigger_internal_hook(
+                InternalHookEvent.create(
+                    "message",
+                    "received",
+                    key,
+                    {
+                        "from": msg.sender_id,
+                        "content": msg.content,
+                        "channel": msg.channel,
+                        "chat_id": msg.chat_id,
+                    },
+                )
+            )
 
         if self._restore_runtime_checkpoint(session):
             self.sessions.save(session)
@@ -639,7 +654,9 @@ class AgentLoop:
 
         # InternalHook: agent:bootstrap
         bootstrap_event = InternalHookEvent.create(
-            "agent", "bootstrap", key,
+            "agent",
+            "bootstrap",
+            key,
             {
                 "workspace_dir": str(self.workspace),
                 "session_key": key,
@@ -696,16 +713,20 @@ class AgentLoop:
 
         # InternalHook: message:sent
         if has_listeners("message", "sent"):
-            await trigger_internal_hook(InternalHookEvent.create(
-                "message", "sent", key,
-                {
-                    "to": msg.chat_id,
-                    "content": final_content,
-                    "success": True,
-                    "channel": msg.channel,
-                    "chat_id": msg.chat_id,
-                },
-            ))
+            await trigger_internal_hook(
+                InternalHookEvent.create(
+                    "message",
+                    "sent",
+                    key,
+                    {
+                        "to": msg.chat_id,
+                        "content": final_content,
+                        "success": True,
+                        "channel": msg.channel,
+                        "chat_id": msg.chat_id,
+                    },
+                )
+            )
 
         meta = dict(msg.metadata or {})
         if on_stream is not None:

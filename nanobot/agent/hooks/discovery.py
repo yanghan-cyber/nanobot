@@ -9,12 +9,16 @@ from __future__ import annotations
 import importlib.util
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from loguru import logger
 
 from nanobot.agent.hooks.frontmatter import parse_hook_frontmatter
 from nanobot.agent.hooks.registry import register_internal_hook
 from nanobot.agent.hooks.security import validate_hook_path
+
+if TYPE_CHECKING:
+    from nanobot.config.schema import HooksConfig
 
 
 def discover_hooks(hooks_dir: Path) -> list[dict]:
@@ -58,15 +62,41 @@ def discover_hooks(hooks_dir: Path) -> list[dict]:
     return entries
 
 
-async def load_hooks(hooks_dir: Path) -> int:
+async def load_hooks(hooks_dir: Path, cfg: HooksConfig | None = None) -> int:
     """Discover, validate, and register all hooks from a directory.
+
+    When *cfg* is provided, applies enabled/allow/deny filtering and
+    scans any additional directories listed in ``cfg.dirs``.
 
     Returns the number of successfully loaded hooks.
     """
-    entries = discover_hooks(hooks_dir)
+    from nanobot.config.schema import HooksConfig
+
+    if cfg is None:
+        cfg = HooksConfig()
+
+    if not cfg.enabled:
+        return 0
+
+    # Collect directories to scan: primary + extra dirs from config
+    dirs_to_scan: list[Path] = [hooks_dir]
+    for extra in cfg.dirs:
+        p = Path(extra)
+        if p.is_dir():
+            dirs_to_scan.append(p)
+
+    entries: list[dict] = []
+    for d in dirs_to_scan:
+        entries.extend(discover_hooks(d))
     loaded = 0
 
     for entry in entries:
+        # Apply allow/deny filters
+        name: str = entry["name"]
+        if cfg.deny and name in cfg.deny:
+            continue
+        if cfg.allow and name not in cfg.allow:
+            continue
         try:
             handler_path: Path = entry["handler_path"]
 

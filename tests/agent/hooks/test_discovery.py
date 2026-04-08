@@ -6,6 +6,7 @@ from pathlib import Path
 from nanobot.agent.hooks.discovery import discover_hooks, load_hooks
 from nanobot.agent.hooks.registry import clear_internal_hooks, has_listeners
 from nanobot.agent.hooks.events import InternalHookEvent
+from nanobot.config.schema import HooksConfig
 
 
 @pytest.fixture(autouse=True)
@@ -153,3 +154,77 @@ async def test_load_hooks_no_events_skipped(tmp_path):
     (hook_dir / "handler.py").write_text("def handler(event): pass\n")
     count = await load_hooks(hooks_dir)
     assert count == 0
+
+
+# --- HooksConfig filtering tests ---
+
+
+def _make_hook(hooks_dir: Path, name: str, events: list[str] | None = None) -> Path:
+    """Helper to create a minimal hook directory."""
+    hook_dir = hooks_dir / name
+    hook_dir.mkdir(parents=True, exist_ok=True)
+    ev_json = str(events or ["agent:bootstrap"]).replace("'", '"')
+    (hook_dir / "HOOK.md").write_text(
+        f'---\nname: {name}\nmetadata: {{"events": {ev_json}}}\n---\n'
+    )
+    (hook_dir / "handler.py").write_text("async def handler(event): pass\n")
+    return hook_dir
+
+
+@pytest.mark.asyncio
+async def test_load_hooks_enabled_false(tmp_path):
+    """When cfg.enabled=False, no hooks should load."""
+    hooks_dir = tmp_path / "hooks"
+    _make_hook(hooks_dir, "hook-a")
+    cfg = HooksConfig(enabled=False)
+    count = await load_hooks(hooks_dir, cfg=cfg)
+    assert count == 0
+    assert not has_listeners("agent", "bootstrap")
+
+
+@pytest.mark.asyncio
+async def test_load_hooks_allow_filter(tmp_path):
+    """When cfg.allow is set, only listed hooks load."""
+    hooks_dir = tmp_path / "hooks"
+    _make_hook(hooks_dir, "hook-a")
+    _make_hook(hooks_dir, "hook-b")
+    cfg = HooksConfig(allow=["hook-a"])
+    count = await load_hooks(hooks_dir, cfg=cfg)
+    assert count == 1
+
+
+@pytest.mark.asyncio
+async def test_load_hooks_deny_filter(tmp_path):
+    """When cfg.deny is set, denied hooks are skipped."""
+    hooks_dir = tmp_path / "hooks"
+    _make_hook(hooks_dir, "hook-a")
+    _make_hook(hooks_dir, "hook-b")
+    cfg = HooksConfig(deny=["hook-a"])
+    count = await load_hooks(hooks_dir, cfg=cfg)
+    assert count == 1
+
+
+@pytest.mark.asyncio
+async def test_load_hooks_allow_empty_loads_all(tmp_path):
+    """When cfg.allow is empty (default), all hooks load."""
+    hooks_dir = tmp_path / "hooks"
+    _make_hook(hooks_dir, "hook-a")
+    _make_hook(hooks_dir, "hook-b")
+    cfg = HooksConfig(allow=[])
+    count = await load_hooks(hooks_dir, cfg=cfg)
+    assert count == 2
+
+
+@pytest.mark.asyncio
+async def test_load_hooks_dirs_scans_extra_directories(tmp_path):
+    """When cfg.dirs contains extra paths, those directories are also scanned."""
+    # Primary hooks dir
+    hooks_dir = tmp_path / "hooks"
+    _make_hook(hooks_dir, "primary-hook")
+    # Extra hooks dir
+    extra_dir = tmp_path / "extra-hooks"
+    _make_hook(extra_dir, "extra-hook")
+    cfg = HooksConfig(dirs=[str(extra_dir)])
+    count = await load_hooks(hooks_dir, cfg=cfg)
+    assert count == 2
+    assert has_listeners("agent", "bootstrap")
