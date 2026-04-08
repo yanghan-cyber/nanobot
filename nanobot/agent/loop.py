@@ -14,7 +14,14 @@ from loguru import logger
 
 from nanobot.agent.context import ContextBuilder
 from nanobot.agent.hook import AgentHook, AgentHookContext, CompositeHook
-from nanobot.agent.hooks.events import InternalHookEvent
+from nanobot.agent.hooks.events import (
+    AGENT,
+    BOOTSTRAP,
+    MESSAGE,
+    RECEIVED,
+    SENT,
+    InternalHookEvent,
+)
 from nanobot.agent.hooks.registry import has_listeners, trigger_internal_hook
 from nanobot.agent.memory import Consolidator, Dream
 from nanobot.agent.runner import AgentRunner, AgentRunSpec
@@ -645,11 +652,11 @@ class AgentLoop:
         session = self.sessions.get_or_create(key)
 
         # InternalHook: message:received
-        if has_listeners("message", "received"):
+        if has_listeners(MESSAGE, RECEIVED):
             await trigger_internal_hook(
                 InternalHookEvent.create(
-                    "message",
-                    "received",
+                    MESSAGE,
+                    RECEIVED,
                     key,
                     {
                         "from_": msg.sender_id,
@@ -681,8 +688,8 @@ class AgentLoop:
         # InternalHook: agent:bootstrap
         bootstrap_files = self._collect_bootstrap_files()
         bootstrap_event = InternalHookEvent.create(
-            "agent",
-            "bootstrap",
+            AGENT,
+            BOOTSTRAP,
             key,
             {
                 "workspace_dir": str(self.workspace),
@@ -690,7 +697,7 @@ class AgentLoop:
                 "bootstrap_files": bootstrap_files,
             },
         )
-        if has_listeners("agent", "bootstrap"):
+        if has_listeners(AGENT, BOOTSTRAP):
             await trigger_internal_hook(bootstrap_event)
             # Read back mutations from hooks
             self._apply_bootstrap_overrides(bootstrap_event)
@@ -742,11 +749,11 @@ class AgentLoop:
         logger.info("Response to {}:{}: {}", msg.channel, msg.sender_id, preview)
 
         # InternalHook: message:sent
-        if has_listeners("message", "sent"):
+        if has_listeners(MESSAGE, SENT):
             await trigger_internal_hook(
                 InternalHookEvent.create(
-                    "message",
-                    "sent",
+                    MESSAGE,
+                    SENT,
                     key,
                     {
                         "to": msg.chat_id,

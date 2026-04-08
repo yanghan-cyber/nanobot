@@ -5,12 +5,22 @@ Aligned with OpenClaw's ``isAgentBootstrapEvent()``, ``isMessageReceivedEvent()`
 
 from __future__ import annotations
 
-from nanobot.agent.hooks.events import InternalHookEvent
+from nanobot.agent.hooks.events import (
+    AFTER_CALL,
+    AGENT,
+    BEFORE_CALL,
+    BOOTSTRAP,
+    MESSAGE,
+    RECEIVED,
+    SENT,
+    TOOL,
+    InternalHookEvent,
+)
 
 
 def is_agent_bootstrap_event(event: InternalHookEvent) -> bool:
     """Check if event is a valid ``agent:bootstrap`` with required context."""
-    if event.type != "agent" or event.action != "bootstrap":
+    if event.type != AGENT or event.action != BOOTSTRAP:
         return False
     ctx = event.context
     return isinstance(ctx.get("workspace_dir"), str) and isinstance(
@@ -20,7 +30,7 @@ def is_agent_bootstrap_event(event: InternalHookEvent) -> bool:
 
 def is_message_received_event(event: InternalHookEvent) -> bool:
     """Check if event is a valid ``message:received`` with required context."""
-    if event.type != "message" or event.action != "received":
+    if event.type != MESSAGE or event.action != RECEIVED:
         return False
     ctx = event.context
     return (
@@ -32,7 +42,7 @@ def is_message_received_event(event: InternalHookEvent) -> bool:
 
 def is_message_sent_event(event: InternalHookEvent) -> bool:
     """Check if event is a valid ``message:sent`` with required context."""
-    if event.type != "message" or event.action != "sent":
+    if event.type != MESSAGE or event.action != SENT:
         return False
     ctx = event.context
     return (
@@ -45,13 +55,13 @@ def is_message_sent_event(event: InternalHookEvent) -> bool:
 
 def is_tool_before_call_event(event: InternalHookEvent) -> bool:
     """Check if event is a valid ``tool:before_call``."""
-    if event.type != "tool" or event.action != "before_call":
+    if event.type != TOOL or event.action != BEFORE_CALL:
         return False
     return isinstance(event.context.get("tool_name"), str)
 
 
 def is_tool_after_call_event(event: InternalHookEvent) -> bool:
     """Check if event is a valid ``tool:after_call``."""
-    if event.type != "tool" or event.action != "after_call":
+    if event.type != TOOL or event.action != AFTER_CALL:
         return False
     return isinstance(event.context.get("tool_name"), str)

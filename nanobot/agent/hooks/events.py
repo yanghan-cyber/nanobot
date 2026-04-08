@@ -6,6 +6,29 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+# ---------------------------------------------------------------------------
+# Event type / action constants (single source of truth)
+# ---------------------------------------------------------------------------
+
+# Types
+AGENT: str = "agent"
+MESSAGE: str = "message"
+TOOL: str = "tool"
+
+# Actions
+BOOTSTRAP: str = "bootstrap"
+RECEIVED: str = "received"
+SENT: str = "sent"
+BEFORE_CALL: str = "before_call"
+AFTER_CALL: str = "after_call"
+
+# Compound keys (for register / unregister)
+AGENT_BOOTSTRAP: str = "agent:bootstrap"
+MESSAGE_RECEIVED: str = "message:received"
+MESSAGE_SENT: str = "message:sent"
+TOOL_BEFORE_CALL: str = "tool:before_call"
+TOOL_AFTER_CALL: str = "tool:after_call"
+
 
 @dataclass
 class InternalHookEvent:

@@ -22,6 +22,19 @@ Usage::
 
 from nanobot.agent.hooks.discovery import load_hooks
 from nanobot.agent.hooks.events import (
+    AFTER_CALL,
+    AGENT,
+    AGENT_BOOTSTRAP,
+    BEFORE_CALL,
+    BOOTSTRAP,
+    MESSAGE,
+    MESSAGE_RECEIVED,
+    MESSAGE_SENT,
+    RECEIVED,
+    SENT,
+    TOOL,
+    TOOL_AFTER_CALL,
+    TOOL_BEFORE_CALL,
     AgentBootstrapContext,
     InternalHookEvent,
     MessageReceivedContext,
@@ -44,17 +57,34 @@ from nanobot.agent.hooks.registry import (
 )
 
 __all__ = [
+    # Constants
+    "AGENT",
+    "AGENT_BOOTSTRAP",
+    "AFTER_CALL",
+    "BEFORE_CALL",
+    "BOOTSTRAP",
+    "MESSAGE",
+    "MESSAGE_RECEIVED",
+    "MESSAGE_SENT",
+    "RECEIVED",
+    "SENT",
+    "TOOL",
+    "TOOL_AFTER_CALL",
+    "TOOL_BEFORE_CALL",
+    # Types
     "InternalHookEvent",
     "AgentBootstrapContext",
     "MessageReceivedContext",
     "MessageSentContext",
     "ToolCallContext",
+    # Registry
     "register_internal_hook",
     "unregister_internal_hook",
     "trigger_internal_hook",
     "clear_internal_hooks",
     "has_listeners",
     "load_hooks",
+    # Guards
     "is_agent_bootstrap_event",
     "is_message_received_event",
     "is_message_sent_event",

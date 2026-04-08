@@ -10,7 +10,12 @@ from typing import Any
 from loguru import logger
 
 from nanobot.agent.hook import AgentHook, AgentHookContext
-from nanobot.agent.hooks.events import InternalHookEvent
+from nanobot.agent.hooks.events import (
+    AFTER_CALL,
+    BEFORE_CALL,
+    TOOL,
+    InternalHookEvent,
+)
 from nanobot.agent.hooks.registry import has_listeners, trigger_internal_hook
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.providers.base import LLMProvider, ToolCallRequest
@@ -449,11 +454,11 @@ class AgentRunner:
             )
 
         # InternalHook: tool:before_call
-        if has_listeners("tool", "before_call"):
+        if has_listeners(TOOL, BEFORE_CALL):
             await trigger_internal_hook(
                 InternalHookEvent.create(
-                    "tool",
-                    "before_call",
+                    TOOL,
+                    BEFORE_CALL,
                     spec.session_key or "",
                     {"tool_name": tool_call.name, "arguments": tool_call.arguments},
                 )
@@ -472,7 +477,7 @@ class AgentRunner:
             tool_error = exc
 
         # InternalHook: tool:after_call (fires for both success and error)
-        if has_listeners("tool", "after_call"):
+        if has_listeners(TOOL, AFTER_CALL):
             after_ctx = {
                 "tool_name": tool_call.name,
                 "arguments": tool_call.arguments,
@@ -482,7 +487,7 @@ class AgentRunner:
             else:
                 after_ctx["result"] = tool_result
             await trigger_internal_hook(
-                InternalHookEvent.create("tool", "after_call", spec.session_key or "", after_ctx)
+                InternalHookEvent.create(TOOL, AFTER_CALL, spec.session_key or "", after_ctx)
             )
 
         if tool_error is not None:
