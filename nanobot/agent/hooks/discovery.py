@@ -115,13 +115,11 @@ async def load_hooks(hooks_dir: Path, cfg: HooksConfig | None = None) -> int:
                 continue
 
             # Extract events from metadata
-            events: list[str] = []
-            if isinstance(metadata, dict):
-                events = metadata.get("events", [])
-                # OpenClaw compatibility: events may be nested under metadata.openclaw
-                openclaw_meta = metadata.get("openclaw", {})
-                if not events and isinstance(openclaw_meta, dict):
-                    events = openclaw_meta.get("events", [])
+            events: list[str] = metadata.get("events", [])
+            # OpenClaw compatibility: events may be nested under metadata.openclaw
+            openclaw_meta = metadata.get("openclaw", {})
+            if not events and isinstance(openclaw_meta, dict):
+                events = openclaw_meta.get("events", [])
 
             if not events:
                 logger.warning("Hook '{}' has no events defined", entry["name"])

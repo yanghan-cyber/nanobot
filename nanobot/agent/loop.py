@@ -215,6 +215,7 @@ class AgentLoop:
         self._last_usage: dict[str, int] = {}
         self._extra_hooks: list[AgentHook] = hooks or []
         self._hooks_config = hooks_config
+        self._hooks_loaded = False
 
         self.context = ContextBuilder(workspace, timezone=timezone)
         self.sessions = session_manager or SessionManager(workspace)
@@ -331,6 +332,10 @@ class AgentLoop:
 
     async def _load_hooks(self) -> None:
         """Load hooks from workspace hooks directory and configured extra dirs."""
+        if self._hooks_loaded:
+            return
+        self._hooks_loaded = True
+
         from nanobot.agent.hooks.discovery import load_hooks
         from nanobot.config.schema import HooksConfig
 
@@ -357,6 +362,7 @@ class AgentLoop:
 
     def _apply_bootstrap_overrides(self, event: InternalHookEvent) -> None:
         """Apply bootstrap file mutations from hook handlers to context builder."""
+        self.context._virtual_bootstrap.clear()
         override_files = event.context.get("bootstrap_files")
         if not override_files:
             return

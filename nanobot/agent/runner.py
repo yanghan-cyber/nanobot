@@ -459,37 +459,43 @@ class AgentRunner:
                 )
             )
 
+        tool_result = None
+        tool_error: BaseException | None = None
         try:
             if tool is not None:
-                result = await tool.execute(**params)
+                tool_result = await tool.execute(**params)
             else:
-                result = await spec.tools.execute(tool_call.name, params)
+                tool_result = await spec.tools.execute(tool_call.name, params)
         except asyncio.CancelledError:
             raise
         except BaseException as exc:
+            tool_error = exc
+
+        # InternalHook: tool:after_call (fires for both success and error)
+        if has_listeners("tool", "after_call"):
+            after_ctx = {
+                "tool_name": tool_call.name,
+                "arguments": tool_call.arguments,
+            }
+            if tool_error is not None:
+                after_ctx["error"] = str(tool_error)
+            else:
+                after_ctx["result"] = tool_result
+            await trigger_internal_hook(
+                InternalHookEvent.create("tool", "after_call", spec.session_key or "", after_ctx)
+            )
+
+        if tool_error is not None:
             event = {
                 "name": tool_call.name,
                 "status": "error",
-                "detail": str(exc),
+                "detail": str(tool_error),
             }
             if spec.fail_on_tool_error:
-                return f"Error: {type(exc).__name__}: {exc}", event, exc
-            return f"Error: {type(exc).__name__}: {exc}", event, None
+                return f"Error: {type(tool_error).__name__}: {tool_error}", event, tool_error
+            return f"Error: {type(tool_error).__name__}: {tool_error}", event, None
 
-        # InternalHook: tool:after_call
-        if has_listeners("tool", "after_call"):
-            await trigger_internal_hook(
-                InternalHookEvent.create(
-                    "tool",
-                    "after_call",
-                    spec.session_key or "",
-                    {
-                        "tool_name": tool_call.name,
-                        "arguments": tool_call.arguments,
-                        "result": result,
-                    },
-                )
-            )
+        result = tool_result
 
         if isinstance(result, str) and result.startswith("Error"):
             event = {
