@@ -36,3 +36,69 @@ class InternalHookEvent:
             session_key=session_key,
             context=context if context is not None else {},
         )
+
+
+# ---------------------------------------------------------------------------
+# Type-specific context structures (aligned with OpenClaw spec §3.4)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class AgentBootstrapContext:
+    """Context for ``agent:bootstrap`` events.
+
+    Aligned with OpenClaw's ``AgentBootstrapHookContext``.
+    """
+
+    workspace_dir: str
+    bootstrap_files: list[dict[str, Any]] = field(default_factory=list)
+    session_key: str | None = None
+    session_id: str | None = None
+    agent_id: str | None = None
+
+
+@dataclass
+class MessageReceivedContext:
+    """Context for ``message:received`` events.
+
+    Aligned with OpenClaw's ``MessageReceivedHookContext``.
+    """
+
+    from_: str
+    content: str
+    channel_id: str
+    conversation_id: str | None = None
+    message_id: str | None = None
+    account_id: str | None = None
+    metadata: dict[str, Any] | None = None
+    timestamp: int | None = None
+
+
+@dataclass
+class MessageSentContext:
+    """Context for ``message:sent`` events.
+
+    Aligned with OpenClaw's ``MessageSentHookContext``.
+    """
+
+    to: str
+    content: str
+    success: bool
+    channel_id: str
+    conversation_id: str | None = None
+    message_id: str | None = None
+    error: str | None = None
+
+
+@dataclass
+class ToolCallContext:
+    """Context for ``tool:before_call`` / ``tool:after_call`` events.
+
+    Nanobot-specific extension (not in OpenClaw).
+    """
+
+    tool_name: str
+    arguments: dict[str, Any] = field(default_factory=dict)
+    result: Any | None = None
+    error: str | None = None
+    session_key: str | None = None

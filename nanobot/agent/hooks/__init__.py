@@ -21,7 +21,13 @@ Usage::
 """
 
 from nanobot.agent.hooks.discovery import load_hooks
-from nanobot.agent.hooks.events import InternalHookEvent
+from nanobot.agent.hooks.events import (
+    AgentBootstrapContext,
+    InternalHookEvent,
+    MessageReceivedContext,
+    MessageSentContext,
+    ToolCallContext,
+)
 from nanobot.agent.hooks.registry import (
     clear_internal_hooks,
     has_listeners,
@@ -32,6 +38,10 @@ from nanobot.agent.hooks.registry import (
 
 __all__ = [
     "InternalHookEvent",
+    "AgentBootstrapContext",
+    "MessageReceivedContext",
+    "MessageSentContext",
+    "ToolCallContext",
     "register_internal_hook",
     "unregister_internal_hook",
     "trigger_internal_hook",
