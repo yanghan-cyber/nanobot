@@ -530,6 +530,28 @@ async def test_runner_uses_specific_message_after_empty_finalization_retry():
 
 
 @pytest.mark.asyncio
+async def test_runspec_accepts_pending_message_callback():
+    """AgentRunSpec should accept an optional pending_message_callback."""
+    from nanobot.agent.runner import AgentRunSpec
+
+    async def _drain() -> list[str]:
+        return ["hello"]
+
+    spec = AgentRunSpec(
+        initial_messages=[],
+        tools=MagicMock(),
+        model="test-model",
+        max_iterations=1,
+        max_tool_result_chars=1024,
+        pending_message_callback=_drain,
+    )
+
+    assert spec.pending_message_callback is _drain
+    texts = await spec.pending_message_callback()
+    assert texts == ["hello"]
+
+
+@pytest.mark.asyncio
 async def test_runner_empty_response_does_not_break_tool_chain():
     """An empty intermediate response must not kill an ongoing tool chain.
 

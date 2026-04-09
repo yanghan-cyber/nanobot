@@ -65,6 +65,7 @@ class AgentRunSpec:
     provider_retry_mode: str = "standard"
     progress_callback: Any | None = None
     checkpoint_callback: Any | None = None
+    pending_message_callback: Any | None = None
 
 
 @dataclass(slots=True)
