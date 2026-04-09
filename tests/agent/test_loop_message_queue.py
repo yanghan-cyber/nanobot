@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -234,19 +233,11 @@ async def test_e2e_message_queue_flow(tmp_path):
     # Wait for any background tasks to complete
     await asyncio.sleep(0.1)
 
-    # If message B was injected, it should appear in the LLM's context
-    # Check both the initial and subsequent LLM calls
+    # Message B should have been injected into the LLM's context via the pending queue
     if captured_messages:
         user_msgs = [m for m in captured_messages if m.get("role") == "user"]
         contents = [m.get("content", "") for m in user_msgs]
-        # Either the first message should contain "task A" or some message should contain "task B"
-        assert any("task A" in c for c in contents) or any("task B" in c for c in contents)
-    else:
-        # If no messages were captured, check the session history
-        # The queued message should have been added to the session
-        session_messages = [m for m in session.messages if m.get("role") == "user"]
-        contents = [m.get("content", "") for m in session_messages]
-        assert any("task A" in c for c in contents) or any("task B" in c for c in contents)
+        assert any("task B" in c for c in contents), f"Expected 'task B' in {contents}"
 
     # The session should be cleaned up after processing
     # (Note: in our test, we manually added it to active_sessions, so clean up manually)
