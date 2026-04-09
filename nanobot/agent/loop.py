@@ -352,6 +352,27 @@ class AgentLoop:
                 return
             self._set_runtime_checkpoint(session, payload)
 
+        # Build the pending message callback for mid-run injection
+        async def _drain_pending() -> list[str]:
+            queue = self._pending_queues.get(session.key if session else None)
+            if not queue:
+                return []
+            texts: list[str] = []
+            while not queue.empty():
+                msg = queue.get_nowait()
+                texts.append(msg.content)
+            # Persist to session history immediately
+            if session and texts:
+                from datetime import datetime
+                for text in texts:
+                    session.messages.append({
+                        "role": "user",
+                        "content": text,
+                        "timestamp": datetime.now().isoformat(),
+                    })
+                self.sessions.save(session)
+            return texts
+
         result = await self.runner.run(
             AgentRunSpec(
                 initial_messages=initial_messages,
@@ -369,6 +390,7 @@ class AgentLoop:
                 provider_retry_mode=self.provider_retry_mode,
                 progress_callback=on_progress,
                 checkpoint_callback=_checkpoint,
+                pending_message_callback=_drain_pending if session else None,
             )
         )
         self._last_usage = result.usage

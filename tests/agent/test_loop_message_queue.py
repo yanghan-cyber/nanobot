@@ -128,3 +128,54 @@ async def test_dispatch_queues_during_active_run(tmp_path):
 
     processing_done.set()
     await task1
+
+
+@pytest.mark.asyncio
+async def test_pending_callback_injects_queued_messages_into_runner(tmp_path):
+    """The pending_message_callback should drain queued messages into the runner's context."""
+    loop = _make_loop(tmp_path)
+
+    # Set up session
+    from nanobot.session.manager import Session
+    session = Session(key="telegram:123")
+    loop.sessions.get_or_create = MagicMock(return_value=session)
+    loop.sessions.save = MagicMock()
+
+    # Pre-populate pending queue
+    queue = loop._pending_queues.setdefault("telegram:123", asyncio.Queue())
+    await queue.put(InboundMessage(channel="telegram", sender_id="user", chat_id="123", content="mid-run msg"))
+
+    # Mock provider to capture messages
+    call_count = {"n": 0}
+    captured: list[dict] = []
+
+    async def chat_with_retry(*, messages, **kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            captured[:] = messages
+            return LLMResponse(
+                content="working",
+                tool_calls=[ToolCallRequest(id="c1", name="list_dir", arguments={"path": "."})],
+                usage={},
+            )
+        captured[:] = messages
+        return LLMResponse(content="done", tool_calls=[], usage={})
+
+    loop.provider.chat_with_retry = chat_with_retry
+    loop.tools.get_definitions = MagicMock(return_value=[])
+    loop.tools.execute = AsyncMock(return_value="tool result")
+
+    # Mark session as active (simulating mid-run state)
+    loop._active_sessions.add("telegram:123")
+
+    result, _, _, _ = await loop._run_agent_loop(
+        [{"role": "user", "content": "initial task"}],
+        session=session,
+        channel="telegram",
+        chat_id="123",
+    )
+
+    assert result == "done"
+    # The second LLM call should include the queued message
+    user_msgs = [m for m in captured if m.get("role") == "user" and "mid-run msg" in m.get("content", "")]
+    assert len(user_msgs) >= 1
