@@ -13,7 +13,7 @@ _TOOL_FORMATS: dict[str, tuple[list[str], str, bool, bool]] = {
     "edit":       (["file_path", "path"],              "edit {}",     True,  False),
     "glob":       (["pattern"],                        'glob "{}"',   False, False),
     "grep":       (["pattern"],                        'grep "{}"',   False, False),
-    "exec":       (["command"],                        "$ {}",        False, True),
+    "bash":       (["command"],                        "$ {}",        False, True),
     "web_search": (["query"],                          'search "{}"', False, False),
     "web_fetch":  (["url"],                            "fetch {}",    True,  False),
     "list_dir":   (["path"],                           "ls {}",       True,  False),

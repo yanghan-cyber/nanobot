@@ -1140,11 +1140,11 @@ async def test_backfill_missing_tool_results_inserts_error():
             "role": "assistant",
             "content": "",
             "tool_calls": [
-                {"id": "call_a", "type": "function", "function": {"name": "exec", "arguments": "{}"}},
+                {"id": "call_a", "type": "function", "function": {"name": "bash", "arguments": "{}"}},
                 {"id": "call_b", "type": "function", "function": {"name": "read_file", "arguments": "{}"}},
             ],
         },
-        {"role": "tool", "tool_call_id": "call_a", "name": "exec", "content": "ok"},
+        {"role": "tool", "tool_call_id": "call_a", "name": "bash", "content": "ok"},
     ]
     result = AgentRunner._backfill_missing_tool_results(messages)
     tool_msgs = [m for m in result if m.get("role") == "tool"]
@@ -1166,10 +1166,10 @@ async def test_backfill_noop_when_complete():
             "role": "assistant",
             "content": "",
             "tool_calls": [
-                {"id": "call_x", "type": "function", "function": {"name": "exec", "arguments": "{}"}},
+                {"id": "call_x", "type": "function", "function": {"name": "bash", "arguments": "{}"}},
             ],
         },
-        {"role": "tool", "tool_call_id": "call_x", "name": "exec", "content": "done"},
+        {"role": "tool", "tool_call_id": "call_x", "name": "bash", "content": "done"},
         {"role": "assistant", "content": "all good"},
     ]
     result = AgentRunner._backfill_missing_tool_results(messages)
@@ -1220,10 +1220,10 @@ async def test_microcompact_preserves_short_results():
         messages.append({
             "role": "assistant",
             "content": "",
-            "tool_calls": [{"id": f"c{i}", "type": "function", "function": {"name": "exec", "arguments": "{}"}}],
+            "tool_calls": [{"id": f"c{i}", "type": "function", "function": {"name": "bash", "arguments": "{}"}}],
         })
         messages.append({
-            "role": "tool", "tool_call_id": f"c{i}", "name": "exec",
+            "role": "tool", "tool_call_id": f"c{i}", "name": "bash",
             "content": "short",
         })
 

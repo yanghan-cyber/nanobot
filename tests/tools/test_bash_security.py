@@ -1,4 +1,4 @@
-"""Tests for exec tool internal URL blocking."""
+"""Tests for bash tool internal URL blocking."""
 
 from __future__ import annotations
 

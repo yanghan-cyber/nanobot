@@ -21,7 +21,7 @@ always: true
 - Use `output_mode="content"` plus `context_before` / `context_after` when you need the exact matching lines
 - Use `fixed_strings=true` for literal timestamps or JSON fragments
 - Use `head_limit` / `offset` to page through long histories
-- Use `exec` only as a last-resort fallback when the built-in search cannot express what you need
+- Use `bash` only as a last-resort fallback when the built-in search cannot express what you need
 
 Examples (replace `keyword`):
 - `grep(pattern="keyword", path="memory/history.jsonl", case_insensitive=true)`

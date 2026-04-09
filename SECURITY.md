@@ -62,9 +62,9 @@ chmod 600 ~/.nanobot/config.json
 
 ### 3. Shell Command Execution
 
-The `exec` tool can execute shell commands. While dangerous command patterns are blocked, you should:
+The `bash` tool can execute shell commands. While dangerous command patterns are blocked, you should:
 
-- ✅ **Enable the bwrap sandbox** (`"tools.exec.sandbox": "bwrap"`) for kernel-level isolation (Linux only)
+- ✅ **Enable the bwrap sandbox** (`"tools.bash.sandbox": "bwrap"`) for kernel-level isolation (Linux only)
 - ✅ Review all tool usage in agent logs
 - ✅ Understand what commands the agent is running
 - ✅ Use a dedicated user account with limited privileges
@@ -72,9 +72,9 @@ The `exec` tool can execute shell commands. While dangerous command patterns are
 - ❌ Don't disable security checks
 - ❌ Don't run on systems with sensitive data without careful review
 
-**Exec sandbox (bwrap):**
+**Bash sandbox (bwrap):**
 
-On Linux, set `"tools.exec.sandbox": "bwrap"` to wrap every shell command in a [bubblewrap](https://github.com/containers/bubblewrap) sandbox. This uses Linux kernel namespaces to restrict what the process can see:
+On Linux, set `"tools.bash.sandbox": "bwrap"` to wrap every shell command in a [bubblewrap](https://github.com/containers/bubblewrap) sandbox. This uses Linux kernel namespaces to restrict what the process can see:
 
 - Workspace directory → **read-write** (agent works normally)
 - Media directory → **read-only** (can read uploaded attachments)
@@ -258,7 +258,7 @@ Before deploying nanobot:
 - [ ] Config file permissions set to 0600
 - [ ] `allowFrom` lists configured for all channels
 - [ ] Running as non-root user
-- [ ] Exec sandbox enabled (`"tools.exec.sandbox": "bwrap"`) on Linux deployments
+- [ ] Bash sandbox enabled (`"tools.bash.sandbox": "bwrap"`) on Linux deployments
 - [ ] File system permissions properly restricted
 - [ ] Dependencies updated to latest secure versions
 - [ ] Logs monitored for security events

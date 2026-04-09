@@ -42,60 +42,60 @@ class TestToolHintKnownTools:
         result = _hint([_tc("grep", {"pattern": "TODO|FIXME", "path": "src"})])
         assert result == 'grep "TODO|FIXME"'
 
-    def test_exec_shows_command(self):
-        result = _hint([_tc("exec", {"command": "npm install typescript"})])
+    def test_bash_shows_command(self):
+        result = _hint([_tc("bash", {"command": "npm install typescript"})])
         assert result == "$ npm install typescript"
 
-    def test_exec_truncates_long_command(self):
+    def test_bash_truncates_long_command(self):
         cmd = "cd /very/long/path && cat file && echo done && sleep 1 && ls -la"
-        result = _hint([_tc("exec", {"command": cmd})])
+        result = _hint([_tc("bash", {"command": cmd})])
         assert result.startswith("$ ")
         assert len(result) <= 50  # reasonable limit
 
-    def test_exec_abbreviates_paths_in_command(self):
-        """Windows paths in exec commands should be folded, not blindly truncated."""
+    def test_bash_abbreviates_paths_in_command(self):
+        """Windows paths in bash commands should be folded, not blindly truncated."""
         cmd = "cd D:\\Documents\\GitHub\\nanobot\\.worktree\\tomain\\nanobot && git diff origin/main...pr-2706 --name-only 2>&1"
-        result = _hint([_tc("exec", {"command": cmd})])
+        result = _hint([_tc("bash", {"command": cmd})])
         assert "\u2026/" in result  # path should be folded with …/
         assert "worktree" not in result  # middle segments should be collapsed
 
-    def test_exec_abbreviates_linux_paths(self):
-        """Unix absolute paths in exec commands should be folded."""
+    def test_bash_abbreviates_linux_paths(self):
+        """Unix absolute paths in bash commands should be folded."""
         cmd = "cd /home/user/projects/nanobot/.worktree/tomain && make build"
-        result = _hint([_tc("exec", {"command": cmd})])
+        result = _hint([_tc("bash", {"command": cmd})])
         assert "\u2026/" in result
         assert "projects" not in result
 
-    def test_exec_abbreviates_home_paths(self):
-        """~/ paths in exec commands should be folded."""
+    def test_bash_abbreviates_home_paths(self):
+        """~/ paths in bash commands should be folded."""
         cmd = "cd ~/projects/nanobot/workspace && pytest tests/"
-        result = _hint([_tc("exec", {"command": cmd})])
+        result = _hint([_tc("bash", {"command": cmd})])
         assert "\u2026/" in result
 
-    def test_exec_abbreviates_quoted_linux_paths_with_spaces(self):
+    def test_bash_abbreviates_quoted_linux_paths_with_spaces(self):
         """Quoted Unix paths with spaces should still be folded."""
         cmd = 'cd "/home/user/My Documents/project" && pytest tests/'
-        result = _hint([_tc("exec", {"command": cmd})])
+        result = _hint([_tc("bash", {"command": cmd})])
         assert "\u2026/" in result
         assert '"/home/user/My Documents/project"' not in result
         assert '"' in result
 
-    def test_exec_abbreviates_quoted_windows_paths_with_spaces(self):
+    def test_bash_abbreviates_quoted_windows_paths_with_spaces(self):
         """Quoted Windows paths with spaces should still be folded."""
         cmd = 'cd "C:/Program Files/Git/project" && git status'
-        result = _hint([_tc("exec", {"command": cmd})])
+        result = _hint([_tc("bash", {"command": cmd})])
         assert "\u2026/" in result
         assert '"C:/Program Files/Git/project"' not in result
         assert '"' in result
 
-    def test_exec_short_command_unchanged(self):
-        result = _hint([_tc("exec", {"command": "npm install typescript"})])
+    def test_bash_short_command_unchanged(self):
+        result = _hint([_tc("bash", {"command": "npm install typescript"})])
         assert result == "$ npm install typescript"
 
-    def test_exec_chained_commands_truncated_not_mid_path(self):
+    def test_bash_chained_commands_truncated_not_mid_path(self):
         """Long chained commands should truncate preserving abbreviated paths."""
         cmd = "cd D:\\Documents\\GitHub\\project && npm run build && npm test"
-        result = _hint([_tc("exec", {"command": cmd})])
+        result = _hint([_tc("bash", {"command": cmd})])
         assert "\u2026/" in result  # path folded
         assert "npm" in result  # chained command still visible
 
