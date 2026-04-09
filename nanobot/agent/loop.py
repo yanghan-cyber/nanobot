@@ -420,79 +420,115 @@ class AgentLoop:
             )
 
     async def _dispatch(self, msg: InboundMessage) -> None:
-        """Process a message: per-session serial, cross-session concurrent."""
+        """Process a message with pending queue for active sessions.
+
+        If the session is already active (runner running), queue the message
+        for injection between iterations. Otherwise, process normally and drain
+        any remaining queued messages after the runner completes.
+        """
         if self._unified_session and not msg.session_key_override:
             msg = dataclasses.replace(msg, session_key_override=UNIFIED_SESSION_KEY)
-        lock = self._session_locks.setdefault(msg.session_key, asyncio.Lock())
-        gate = self._concurrency_gate or nullcontext()
-        async with lock, gate:
-            try:
-                on_stream = on_stream_end = None
-                if msg.metadata.get("_wants_stream"):
-                    # Split one answer into distinct stream segments.
-                    stream_base_id = f"{msg.session_key}:{time.time_ns()}"
-                    stream_segment = 0
 
-                    def _current_stream_id() -> str:
-                        return f"{stream_base_id}:{stream_segment}"
+        effective_key = msg.session_key
 
-                    async def on_stream(delta: str) -> None:
-                        meta = dict(msg.metadata or {})
-                        meta["_stream_delta"] = True
-                        meta["_stream_id"] = _current_stream_id()
-                        await self.bus.publish_outbound(
-                            OutboundMessage(
-                                channel=msg.channel,
-                                chat_id=msg.chat_id,
-                                content=delta,
-                                metadata=meta,
+        # If session is already active, queue the message and return immediately
+        if effective_key in self._active_sessions:
+            queue = self._pending_queues.setdefault(effective_key, asyncio.Queue())
+            queue.put_nowait(msg)
+            return
+
+        # Mark session as active
+        self._active_sessions.add(effective_key)
+        try:
+            # Acquire concurrency gate for the actual processing
+            gate = self._concurrency_gate or nullcontext()
+            async with gate:
+                try:
+                    on_stream = on_stream_end = None
+                    if msg.metadata.get("_wants_stream"):
+                        stream_base_id = f"{msg.session_key}:{time.time_ns()}"
+                        stream_segment = 0
+
+                        def _current_stream_id() -> str:
+                            return f"{stream_base_id}:{stream_segment}"
+
+                        async def on_stream(delta: str) -> None:
+                            meta = dict(msg.metadata or {})
+                            meta["_stream_delta"] = True
+                            meta["_stream_id"] = _current_stream_id()
+                            await self.bus.publish_outbound(
+                                OutboundMessage(
+                                    channel=msg.channel,
+                                    chat_id=msg.chat_id,
+                                    content=delta,
+                                    metadata=meta,
+                                )
                             )
-                        )
 
-                    async def on_stream_end(*, resuming: bool = False) -> None:
-                        nonlocal stream_segment
-                        meta = dict(msg.metadata or {})
-                        meta["_stream_end"] = True
-                        meta["_resuming"] = resuming
-                        meta["_stream_id"] = _current_stream_id()
+                        async def on_stream_end(*, resuming: bool = False) -> None:
+                            nonlocal stream_segment
+                            meta = dict(msg.metadata or {})
+                            meta["_stream_end"] = True
+                            meta["_resuming"] = resuming
+                            meta["_stream_id"] = _current_stream_id()
+                            await self.bus.publish_outbound(
+                                OutboundMessage(
+                                    channel=msg.channel,
+                                    chat_id=msg.chat_id,
+                                    content="",
+                                    metadata=meta,
+                                )
+                            )
+                            stream_segment += 1
+
+                    response = await self._process_message(
+                        msg,
+                        on_stream=on_stream,
+                        on_stream_end=on_stream_end,
+                    )
+                    if response is not None:
+                        await self.bus.publish_outbound(response)
+                    elif msg.channel == "cli":
                         await self.bus.publish_outbound(
                             OutboundMessage(
                                 channel=msg.channel,
                                 chat_id=msg.chat_id,
                                 content="",
-                                metadata=meta,
+                                metadata=msg.metadata or {},
                             )
                         )
-                        stream_segment += 1
-
-                response = await self._process_message(
-                    msg,
-                    on_stream=on_stream,
-                    on_stream_end=on_stream_end,
-                )
-                if response is not None:
-                    await self.bus.publish_outbound(response)
-                elif msg.channel == "cli":
+                except asyncio.CancelledError:
+                    logger.info("Task cancelled for session {}", msg.session_key)
+                    raise
+                except Exception:
+                    logger.exception("Error processing message for session {}", msg.session_key)
                     await self.bus.publish_outbound(
                         OutboundMessage(
                             channel=msg.channel,
                             chat_id=msg.chat_id,
-                            content="",
-                            metadata=msg.metadata or {},
+                            content="Sorry, I encountered an error.",
                         )
                     )
-            except asyncio.CancelledError:
-                logger.info("Task cancelled for session {}", msg.session_key)
-                raise
-            except Exception:
-                logger.exception("Error processing message for session {}", msg.session_key)
-                await self.bus.publish_outbound(
-                    OutboundMessage(
-                        channel=msg.channel,
-                        chat_id=msg.chat_id,
-                        content="Sorry, I encountered an error.",
-                    )
-                )
+
+            # Drain remaining pending messages after runner completes
+            queue = self._pending_queues.get(effective_key)
+            while queue and not queue.empty():
+                batch: list[InboundMessage] = []
+                while not queue.empty():
+                    batch.append(queue.get_nowait())
+                for pending_msg in batch:
+                    try:
+                        gate = self._concurrency_gate or nullcontext()
+                        async with gate:
+                            response = await self._process_message(pending_msg)
+                        if response is not None:
+                            await self.bus.publish_outbound(response)
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:
+                        logger.exception("Error processing pending message for session {}", effective_key)
+        finally:
+            self._active_sessions.discard(effective_key)
 
     async def close_mcp(self) -> None:
         """Drain pending background archives, then close MCP connections."""
