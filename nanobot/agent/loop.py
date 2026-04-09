@@ -201,7 +201,6 @@ class AgentLoop:
         self._mcp_connecting = False
         self._active_tasks: dict[str, list[asyncio.Task]] = {}  # session_key -> tasks
         self._background_tasks: list[asyncio.Task] = []
-        self._session_locks: dict[str, asyncio.Lock] = {}
         self._pending_queues: dict[str, asyncio.Queue[InboundMessage]] = {}
         self._active_sessions: set[str] = set()
         # NANOBOT_MAX_CONCURRENT_REQUESTS: <=0 means unlimited; default 3.
