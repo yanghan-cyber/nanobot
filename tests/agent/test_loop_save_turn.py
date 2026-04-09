@@ -11,20 +11,22 @@ def _mk_loop() -> AgentLoop:
     return loop
 
 
-def test_save_turn_skips_multimodal_user_when_only_runtime_context() -> None:
+def test_save_turn_preserves_runtime_context_in_string_user_message() -> None:
+    """Runtime context in user messages is kept verbatim for cache stability."""
     loop = _mk_loop()
-    session = Session(key="test:runtime-only")
+    session = Session(key="test:runtime-keep")
     runtime = ContextBuilder._RUNTIME_CONTEXT_TAG + "\nCurrent Time: now (UTC)"
 
     loop._save_turn(
         session,
-        [{"role": "user", "content": [{"type": "text", "text": runtime}]}],
+        [{"role": "user", "content": f"{runtime}\n\nHello world"}],
         skip=0,
     )
-    assert session.messages == []
+    assert len(session.messages) == 1
+    assert session.messages[0]["content"] == f"{runtime}\n\nHello world"
 
 
-def test_save_turn_keeps_image_placeholder_with_path_after_runtime_strip() -> None:
+def test_save_turn_keeps_image_placeholder_with_runtime_context() -> None:
     loop = _mk_loop()
     session = Session(key="test:image")
     runtime = ContextBuilder._RUNTIME_CONTEXT_TAG + "\nCurrent Time: now (UTC)"
@@ -40,7 +42,11 @@ def test_save_turn_keeps_image_placeholder_with_path_after_runtime_strip() -> No
         }],
         skip=0,
     )
-    assert session.messages[0]["content"] == [{"type": "text", "text": "[image: /media/feishu/photo.jpg]"}]
+    assert len(session.messages) == 1
+    saved = session.messages[0]["content"]
+    # image is replaced with placeholder, runtime context block is kept
+    assert saved[0]["text"] == runtime
+    assert saved[1] == {"type": "text", "text": "[image: /media/feishu/photo.jpg]"}
 
 
 def test_save_turn_keeps_image_placeholder_without_meta() -> None:
@@ -59,7 +65,10 @@ def test_save_turn_keeps_image_placeholder_without_meta() -> None:
         }],
         skip=0,
     )
-    assert session.messages[0]["content"] == [{"type": "text", "text": "[image]"}]
+    assert len(session.messages) == 1
+    saved = session.messages[0]["content"]
+    assert saved[0]["text"] == runtime
+    assert saved[1] == {"type": "text", "text": "[image]"}
 
 
 def test_save_turn_keeps_tool_results_under_16k() -> None:

@@ -126,8 +126,8 @@ class ContextBuilder:
         runtime_ctx = self._build_runtime_context(channel, chat_id, self.timezone)
         user_content = self._build_user_content(current_message, media)
 
-        # Merge runtime context and user content into a single user message
-        # to avoid consecutive same-role messages that some providers reject.
+        # Prepend runtime context before user content so it stays inside the
+        # cached prefix once saved to history (identical bytes = cache hit).
         if isinstance(user_content, str):
             merged = f"{runtime_ctx}\n\n{user_content}"
         else:
