@@ -542,6 +542,7 @@ class AgentLoop:
                         logger.exception("Error processing pending message for session {}", effective_key)
         finally:
             self._active_sessions.discard(effective_key)
+            self._pending_queues.pop(effective_key, None)
 
     async def close_mcp(self) -> None:
         """Drain pending background archives, then close MCP connections."""
