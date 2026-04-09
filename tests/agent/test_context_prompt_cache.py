@@ -154,7 +154,7 @@ def test_execution_rules_in_system_prompt(tmp_path) -> None:
     builder = ContextBuilder(workspace)
 
     prompt = builder.build_system_prompt()
-    assert "State intent before tool calls" in prompt
+    assert "Act, don't narrate" in prompt
     assert "Read before you write" in prompt
     assert "verify the result" in prompt
 
