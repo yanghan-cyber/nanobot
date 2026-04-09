@@ -65,6 +65,7 @@ class AgentRunSpec:
     provider_retry_mode: str = "standard"
     progress_callback: Any | None = None
     checkpoint_callback: Any | None = None
+    pending_message_callback: Any | None = None
 
 
 @dataclass(slots=True)
@@ -100,6 +101,15 @@ class AgentRunner:
         length_recovery_count = 0
 
         for iteration in range(spec.max_iterations):
+            # Drain pending user messages between iterations
+            if spec.pending_message_callback is not None:
+                try:
+                    pending_texts = await spec.pending_message_callback()
+                except Exception:
+                    pending_texts = []
+                for text in pending_texts:
+                    messages.append({"role": "user", "content": text})
+
             try:
                 messages = self._backfill_missing_tool_results(messages)
                 messages = self._microcompact(messages)

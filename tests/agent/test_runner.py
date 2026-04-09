@@ -530,6 +530,28 @@ async def test_runner_uses_specific_message_after_empty_finalization_retry():
 
 
 @pytest.mark.asyncio
+async def test_runspec_accepts_pending_message_callback():
+    """AgentRunSpec should accept an optional pending_message_callback."""
+    from nanobot.agent.runner import AgentRunSpec
+
+    async def _drain() -> list[str]:
+        return ["hello"]
+
+    spec = AgentRunSpec(
+        initial_messages=[],
+        tools=MagicMock(),
+        model="test-model",
+        max_iterations=1,
+        max_tool_result_chars=1024,
+        pending_message_callback=_drain,
+    )
+
+    assert spec.pending_message_callback is _drain
+    texts = await spec.pending_message_callback()
+    assert texts == ["hello"]
+
+
+@pytest.mark.asyncio
 async def test_runner_empty_response_does_not_break_tool_chain():
     """An empty intermediate response must not kill an ongoing tool chain.
 
@@ -999,6 +1021,55 @@ async def test_runner_passes_cached_tokens_to_hook_context():
 
     assert len(captured_usage) == 1
     assert captured_usage[0]["cached_tokens"] == 150
+
+
+@pytest.mark.asyncio
+async def test_runner_injects_pending_messages_between_iterations():
+    """Pending messages should be injected as user messages between iterations."""
+    from nanobot.agent.runner import AgentRunSpec, AgentRunner
+
+    provider = MagicMock()
+    call_count = {"n": 0}
+    captured: list[dict] = []
+
+    async def chat_with_retry(*, messages, **kwargs):
+        call_count["n"] += 1
+        captured[:] = messages
+        if call_count["n"] == 1:
+            return LLMResponse(
+                content="working",
+                tool_calls=[ToolCallRequest(id="c1", name="list_dir", arguments={"path": "."})],
+                usage={},
+            )
+        return LLMResponse(content="done", tool_calls=[], usage={})
+
+    provider.chat_with_retry = chat_with_retry
+    tools = MagicMock()
+    tools.get_definitions.return_value = []
+    tools.execute = AsyncMock(return_value="tool result")
+
+    drain_count = {"n": 0}
+
+    async def drain_callback() -> list[str]:
+        drain_count["n"] += 1
+        if drain_count["n"] == 1:
+            return ["please stop"]
+        return []
+
+    runner = AgentRunner(provider)
+    result = await runner.run(AgentRunSpec(
+        initial_messages=[{"role": "user", "content": "do task"}],
+        tools=tools,
+        model="test-model",
+        max_iterations=3,
+        max_tool_result_chars=4096,
+        pending_message_callback=drain_callback,
+    ))
+
+    assert result.final_content == "done"
+    # Second LLM call should see the injected user message
+    user_msgs = [m for m in captured if m.get("role") == "user"]
+    assert any("please stop" in m.get("content", "") for m in user_msgs)
 
 
 # ---------------------------------------------------------------------------
