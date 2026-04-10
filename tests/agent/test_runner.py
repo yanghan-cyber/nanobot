@@ -970,13 +970,11 @@ async def test_next_turn_after_llm_error_keeps_turn_boundary(tmp_path):
     assert first.content == "429 rate limit exceeded"
 
     session = loop.sessions.get_or_create("cli:test")
-    assert [
-        {key: value for key, value in message.items() if key in {"role", "content"}}
-        for message in session.messages
-    ] == [
-        {"role": "user", "content": "first question"},
-        {"role": "assistant", "content": _PERSISTED_MODEL_ERROR_PLACEHOLDER},
-    ]
+    assert len(session.messages) == 2
+    assert session.messages[0]["role"] == "user"
+    assert "first question" in session.messages[0]["content"]
+    assert session.messages[1]["role"] == "assistant"
+    assert session.messages[1]["content"] == _PERSISTED_MODEL_ERROR_PLACEHOLDER
 
     second = await loop._process_message(
         InboundMessage(channel="cli", sender_id="user", chat_id="test", content="second question")
@@ -986,7 +984,8 @@ async def test_next_turn_after_llm_error_keeps_turn_boundary(tmp_path):
 
     request_messages = provider.chat_with_retry.await_args_list[1].kwargs["messages"]
     non_system = [message for message in request_messages if message.get("role") != "system"]
-    assert non_system[0] == {"role": "user", "content": "first question"}
+    assert non_system[0]["role"] == "user"
+    assert "first question" in non_system[0]["content"]
     assert non_system[1] == {
         "role": "assistant",
         "content": _PERSISTED_MODEL_ERROR_PLACEHOLDER,
@@ -1497,31 +1496,22 @@ async def test_backfill_repairs_model_context_without_shifting_save_turn_boundar
     assert len(synthetic) == 1
     assert synthetic[0]["content"] == _BACKFILL_CONTENT
 
+    # Runtime Context is injected before user content by AgentLoop,
+    # so verify structure via roles and containment instead of exact match.
     session_after = loop.sessions.get_or_create("cli:test")
-    assert [
-        {
-            key: value
-            for key, value in message.items()
-            if key in {"role", "content", "tool_call_id", "name", "tool_calls"}
-        }
-        for message in session_after.messages
-    ] == [
-        {"role": "user", "content": "old user"},
-        {
-            "role": "assistant",
-            "content": "",
-            "tool_calls": [
-                {
-                    "id": "call_missing",
-                    "type": "function",
-                    "function": {"name": "read_file", "arguments": "{}"},
-                }
-            ],
-        },
-        {"role": "assistant", "content": "old tail"},
-        {"role": "user", "content": "new prompt"},
-        {"role": "assistant", "content": "new answer"},
+    assert len(session_after.messages) == 5
+    assert session_after.messages[0]["role"] == "user"
+    assert session_after.messages[0]["content"] == "old user"
+    assert session_after.messages[1]["role"] == "assistant"
+    assert session_after.messages[1]["tool_calls"] == [
+        {"id": "call_missing", "type": "function", "function": {"name": "read_file", "arguments": "{}"}}
     ]
+    assert session_after.messages[2]["role"] == "assistant"
+    assert session_after.messages[2]["content"] == "old tail"
+    assert session_after.messages[3]["role"] == "user"
+    assert "new prompt" in session_after.messages[3]["content"]
+    assert session_after.messages[4]["role"] == "assistant"
+    assert session_after.messages[4]["content"] == "new answer"
 
 
 @pytest.mark.asyncio

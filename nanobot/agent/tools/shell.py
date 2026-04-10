@@ -731,15 +731,13 @@ class ShellBgTool(Tool):
         try:
             tail = ShellBgTool._DEFAULT_TAIL
 
-            # Single-pass: count lines and keep last N in memory
+            # Single-pass: count all lines and keep last N in memory
             with open(output_file, "r", encoding="utf-8", errors="replace") as f:
-                last_lines = deque(f, maxlen=tail)
-                total_lines = len(last_lines)
-
-                # If deque is full, we need to count remaining lines
-                if len(last_lines) == tail:
-                    for _ in f:
-                        total_lines += 1
+                last_lines: deque[str] = deque(maxlen=tail)
+                total_lines = 0
+                for line in f:
+                    total_lines += 1
+                    last_lines.append(line)
 
             if total_lines == 0:
                 return "No output yet."
