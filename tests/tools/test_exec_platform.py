@@ -27,7 +27,7 @@ class TestBuildEnvUnix:
     def test_expected_keys(self):
         with patch("nanobot.agent.tools.shell._IS_WINDOWS", False):
             env = BashTool()._build_env()
-        expected = {"HOME", "LANG", "TERM"}
+        expected = {"HOME", "LANG", "TERM", "USER", "SHELL"}
         assert expected <= set(env)
         if sys.platform != "win32":
             assert set(env) == expected
@@ -117,7 +117,7 @@ class TestPathAppendPlatform:
 
         # command arg should contain the export prefix
         command_arg = captured_args[-1]
-        assert 'export PATH="$PATH:/opt/bin"' in command_arg
+        assert 'export PATH="/opt/bin:$PATH"' in command_arg
         assert "ls" in command_arg
 
 

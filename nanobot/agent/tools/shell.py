@@ -6,13 +6,15 @@ import asyncio
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import time
 import uuid
+from collections import deque
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 from loguru import logger
 
@@ -91,16 +93,40 @@ def _resolve_shell() -> str:
 
 _bg_processes: dict[str, asyncio.subprocess.Process] = {}
 _bg_meta: dict[str, dict] = {}
-_bg_file_handles: dict[str, Any] = {}
+_bg_file_handles: dict[str, BinaryIO] = {}
 _last_cleanup: float = 0.0  # monotonic timestamp of last cleanup run
 _CLEANUP_INTERVAL = 300.0  # minimum seconds between cleanup sweeps (5 min)
+_bg_lock = asyncio.Lock()  # protect concurrent access to bg state
+_MAX_ENTRIES = 128  # maximum number of completed tasks to keep
 
 
 def _bg_output_path(bg_id: str) -> Path:
     return ensure_dir(get_data_dir() / "tool-output" / "shell") / f"{bg_id}_output.log"
 
 
-def _cleanup_bg_meta(ttl_minutes: int = 120, max_entries: int = 128) -> None:
+def _close_file_handle(fh: BinaryIO | None) -> None:
+    """Safely close a file handle, ignoring errors."""
+    if fh:
+        try:
+            fh.close()
+        except Exception:
+            pass
+
+
+def _should_cleanup() -> bool:
+    """Check if cleanup should run (time-based or threshold-based).
+
+    Note: Reads shared state without lock for performance. The threshold
+    check provides a safety net if time-based check races.
+    """
+    now = time.monotonic()
+    if now - _last_cleanup < _CLEANUP_INTERVAL:
+        # Force cleanup if too many entries accumulated
+        return len(_bg_meta) > _MAX_ENTRIES * 0.8
+    return True
+
+
+async def _cleanup_bg_meta(ttl_minutes: int = 120, max_entries: int = 128) -> None:
     """Remove expired or excess completed bg task metadata and their log files.
 
     Rules:
@@ -110,47 +136,47 @@ def _cleanup_bg_meta(ttl_minutes: int = 120, max_entries: int = 128) -> None:
     """
     global _last_cleanup
 
-    now_monotonic = time.monotonic()
-    if now_monotonic - _last_cleanup < _CLEANUP_INTERVAL:
+    if not _should_cleanup():
         return
 
-    if not _bg_meta:
-        _last_cleanup = now_monotonic
-        return
+    async with _bg_lock:
+        if not _bg_meta:
+            _last_cleanup = time.monotonic()
+            return
 
-    now = datetime.now()
-    to_remove: list[str] = []
+        now = datetime.now()
+        to_remove: list[str] = []
 
-    # Phase 1: TTL eviction
-    for bg_id, m in _bg_meta.items():
-        if m.get("status") == "running":
-            continue
-        end_time_str = m.get("end_time")
-        if not end_time_str:
-            continue
-        try:
-            end_time = datetime.fromisoformat(end_time_str)
-            if (now - end_time).total_seconds() > ttl_minutes * 60:
-                to_remove.append(bg_id)
-        except (ValueError, TypeError):
-            pass
+        # Phase 1: TTL eviction
+        for bg_id, m in _bg_meta.items():
+            if m.get("status") == "running":
+                continue
+            end_time_str = m.get("end_time")
+            if not end_time_str:
+                continue
+            try:
+                end_time = datetime.fromisoformat(end_time_str)
+                if (now - end_time).total_seconds() > ttl_minutes * 60:
+                    to_remove.append(bg_id)
+            except (ValueError, TypeError):
+                pass
 
-    for bg_id in to_remove:
-        _remove_bg_entry(bg_id)
-
-    # Phase 2: cap eviction — if still over max, remove oldest first
-    completed = [
-        (bg_id, m.get("end_time", ""))
-        for bg_id, m in _bg_meta.items()
-        if m.get("status") != "running"
-    ]
-    excess = len(completed) - max_entries
-    if excess > 0:
-        completed.sort(key=lambda x: x[1])
-        for bg_id, _ in completed[:excess]:
+        for bg_id in to_remove:
             _remove_bg_entry(bg_id)
 
-    _last_cleanup = now_monotonic
+        # Phase 2: cap eviction — if still over max, remove oldest first
+        completed = [
+            (bg_id, m.get("end_time", ""))
+            for bg_id, m in _bg_meta.items()
+            if m.get("status") != "running"
+        ]
+        excess = len(completed) - max_entries
+        if excess > 0:
+            completed.sort(key=lambda x: x[1])
+            for bg_id, _ in completed[:excess]:
+                _remove_bg_entry(bg_id)
+
+        _last_cleanup = time.monotonic()
 
 
 def _remove_bg_entry(bg_id: str) -> None:
@@ -162,9 +188,7 @@ def _remove_bg_entry(bg_id: str) -> None:
         except Exception:
             pass
     _bg_processes.pop(bg_id, None)
-    fh = _bg_file_handles.pop(bg_id, None)
-    if fh:
-        fh.close()
+    _close_file_handle(_bg_file_handles.pop(bg_id, None))
 
 
 async def _monitor_process(bg_id: str) -> None:
@@ -172,19 +196,26 @@ async def _monitor_process(bg_id: str) -> None:
     process = _bg_processes.get(bg_id)
     meta = _bg_meta.get(bg_id)
     if not process or not meta:
+        # Cleanup any orphaned resources
+        _close_file_handle(_bg_file_handles.pop(bg_id, None))
         return
 
     try:
         exit_code = await process.wait()
-        # Don't overwrite if _kill() already set status to "killed"
-        if meta.get("status") != "killed":
-            meta["status"] = "completed" if exit_code == 0 else "failed"
-        meta["exit_code"] = exit_code
-        meta["end_time"] = datetime.now().isoformat()
+        async with _bg_lock:
+            # Don't overwrite if _kill() already set status to "killed"
+            if meta.get("status") != "killed":
+                meta["status"] = "completed" if exit_code == 0 else "failed"
+            meta["exit_code"] = exit_code
+            meta["end_time"] = datetime.now().isoformat()
+    except Exception as e:
+        logger.error(f"Error monitoring process {bg_id}: {e}")
+        async with _bg_lock:
+            meta["status"] = "failed"
+            meta["error"] = str(e)
+            meta["end_time"] = datetime.now().isoformat()
     finally:
-        fh = _bg_file_handles.pop(bg_id, None)
-        if fh:
-            fh.close()
+        _close_file_handle(_bg_file_handles.pop(bg_id, None))
         _bg_processes.pop(bg_id, None)
 
 
@@ -310,9 +341,9 @@ class BashTool(Tool):
 
         if self.path_append:
             if is_bash:
-                command = f'export PATH="$PATH:{self.path_append}"; {command}'
+                command = f'export PATH="{self.path_append}:$PATH"; {command}'
             else:
-                env["PATH"] = env.get("PATH", "") + os.pathsep + self.path_append
+                env["PATH"] = self.path_append + os.pathsep + env.get("PATH", "")
 
         if run_in_background:
             return await self._run_background(command, cwd, env, shell, purpose)
@@ -330,6 +361,12 @@ class BashTool(Tool):
         try:
             is_bash = "bash" in Path(shell).name.lower()
             shell_args = ["-l", "-c", command] if is_bash else ["-c", command]
+
+            # On Unix, create new session for proper process group management
+            extra_kwargs = {}
+            if not _IS_WINDOWS:
+                extra_kwargs["preexec_fn"] = os.setsid
+
             process = await asyncio.create_subprocess_exec(
                 shell,
                 *shell_args,
@@ -337,6 +374,7 @@ class BashTool(Tool):
                 stderr=asyncio.subprocess.PIPE,
                 cwd=cwd,
                 env=env,
+                **extra_kwargs,
             )
 
             try:
@@ -367,12 +405,23 @@ class BashTool(Tool):
 
             max_len = self._MAX_OUTPUT
             if len(result) > max_len:
-                half = max_len // 2
-                result = (
-                    result[:half]
-                    + f"\n\n... ({len(result) - max_len:,} chars truncated) ...\n\n"
-                    + result[-half:]
-                )
+                # For errors, preserve more of the tail (stack traces are at the end)
+                if process.returncode != 0:
+                    head = max_len // 4
+                    tail = (max_len * 3) // 4
+                    result = (
+                        result[:head]
+                        + f"\n\n... ({len(result) - max_len:,} chars truncated) ...\n\n"
+                        + result[-tail:]
+                    )
+                else:
+                    # For success, split evenly
+                    half = max_len // 2
+                    result = (
+                        result[:half]
+                        + f"\n\n... ({len(result) - max_len:,} chars truncated) ...\n\n"
+                        + result[-half:]
+                    )
 
             return result
 
@@ -391,39 +440,57 @@ class BashTool(Tool):
         output_file = _bg_output_path(bg_id)
         output_file.parent.mkdir(parents=True, exist_ok=True)
 
-        fh = open(output_file, "wb")
+        fh = None
+        try:
+            fh = open(output_file, "wb")
 
-        is_bash = "bash" in Path(shell).name.lower()
-        shell_args = ["-l", "-c", command] if is_bash else ["-c", command]
-        process = await asyncio.create_subprocess_exec(
-            shell,
-            *shell_args,
-            stdout=fh,
-            stderr=subprocess.STDOUT,
-            cwd=cwd,
-            env=env,
-        )
+            is_bash = "bash" in Path(shell).name.lower()
+            shell_args = ["-l", "-c", command] if is_bash else ["-c", command]
 
-        _bg_processes[bg_id] = process
-        _bg_meta[bg_id] = {
-            "command": command,
-            "purpose": purpose,
-            "start_time": datetime.now().isoformat(),
-            "status": "running",
-            "output_file": str(output_file),
-        }
-        _bg_file_handles[bg_id] = fh
+            # On Unix, create new session for proper process group management
+            extra_kwargs = {}
+            if not _IS_WINDOWS:
+                extra_kwargs["preexec_fn"] = os.setsid
 
-        asyncio.create_task(_monitor_process(bg_id))
+            process = await asyncio.create_subprocess_exec(
+                shell,
+                *shell_args,
+                stdout=fh,
+                stderr=subprocess.STDOUT,
+                cwd=cwd,
+                env=env,
+                **extra_kwargs,
+            )
 
-        return (
-            f"Background task started.\n"
-            f"bash_bg_id: {bg_id}\n"
-            f"Command: {command}\n\n"
-            f"Use `shell_bg(action='output', bash_bg_id='{bg_id}')` to read output.\n"
-            f"Use `shell_bg(action='kill', bash_bg_id='{bg_id}')` to terminate.\n"
-            f"Use `shell_bg(action='list')` to see all background tasks."
-        )
+            async with _bg_lock:
+                _bg_processes[bg_id] = process
+                _bg_meta[bg_id] = {
+                    "command": command,
+                    "purpose": purpose,
+                    "start_time": datetime.now().isoformat(),
+                    "status": "running",
+                    "output_file": str(output_file),
+                }
+                _bg_file_handles[bg_id] = fh
+
+            asyncio.create_task(_monitor_process(bg_id))
+
+            return (
+                f"Background task started.\n"
+                f"bash_bg_id: {bg_id}\n"
+                f"Command: {command}\n\n"
+                f"Use `shell_bg(action='output', bash_bg_id='{bg_id}')` to read output.\n"
+                f"Use `shell_bg(action='kill', bash_bg_id='{bg_id}')` to terminate.\n"
+                f"Use `shell_bg(action='list')` to see all background tasks."
+            )
+
+        except Exception as e:
+            _close_file_handle(fh)
+            try:
+                output_file.unlink(missing_ok=True)
+            except Exception:
+                pass
+            return f"Error starting background task: {str(e)}"
 
     @staticmethod
     async def _kill_process(process: asyncio.subprocess.Process) -> None:
@@ -440,9 +507,14 @@ class BashTool(Tool):
             await proc.wait()
         else:
             try:
-                os.killpg(pid, 9)  # kill the whole process group
-            except (ProcessLookupError, PermissionError):
-                pass
+                # Kill the process group (created via preexec_fn=os.setsid)
+                os.killpg(os.getpgid(pid), signal.SIGKILL)
+            except (ProcessLookupError, PermissionError, OSError):
+                # Fallback: kill just the process if it's not in a group
+                try:
+                    process.kill()
+                except (ProcessLookupError, PermissionError):
+                    pass
         # reap
         try:
             await asyncio.wait_for(process.wait(), timeout=5.0)
@@ -458,7 +530,7 @@ class BashTool(Tool):
     def _build_env(self) -> dict[str, str]:
         """Build a minimal environment for subprocess execution.
 
-        On Unix, only HOME/LANG/TERM are passed; ``bash -l`` sources the
+        On Unix, only HOME/USER/SHELL/LANG/TERM are passed; ``bash -l`` sources the
         user's profile which sets PATH and other essentials.
 
         On Windows, ``cmd.exe`` has no login-profile mechanism, so a curated
@@ -492,6 +564,8 @@ class BashTool(Tool):
         home = os.environ.get("HOME", "/tmp")
         env = {
             "HOME": home,
+            "USER": os.environ.get("USER", "unknown"),
+            "SHELL": os.environ.get("SHELL", "/bin/bash"),
             "LANG": os.environ.get("LANG", "C.UTF-8"),
             "TERM": os.environ.get("TERM", "dumb"),
         }
@@ -612,11 +686,11 @@ class ShellBgTool(Tool):
         bash_bg_id: str = "",
         **kwargs: Any,
     ) -> str:
-        _cleanup_bg_meta(self._ttl_minutes, self._max_entries)
+        await _cleanup_bg_meta(self._ttl_minutes, self._max_entries)
         if action == "list":
-            return self._list()
+            return await self._list()
         elif action == "output":
-            return self._output(bash_bg_id)
+            return await self._output(bash_bg_id)
         elif action == "kill":
             return await self._kill(bash_bg_id)
         else:
@@ -625,47 +699,57 @@ class ShellBgTool(Tool):
     # -- list ---------------------------------------------------------------
 
     @staticmethod
-    def _list() -> str:
-        if not _bg_meta:
-            return "No background tasks running."
+    async def _list() -> str:
+        async with _bg_lock:
+            if not _bg_meta:
+                return "No background tasks running."
 
-        rows = []
-        for bg_id, m in _bg_meta.items():
-            rows.append(
-                f"  {bg_id}  status={m['status']}  command={m['command']}  "
-                f"purpose={m.get('purpose', '')}"
-            )
-        return "\n".join(rows)
+            rows = []
+            for bg_id, m in _bg_meta.items():
+                rows.append(
+                    f"  {bg_id}  status={m['status']}  command={m['command']}  "
+                    f"purpose={m.get('purpose', '')}"
+                )
+            return "\n".join(rows)
 
     # -- output -------------------------------------------------------------
 
     @staticmethod
-    def _output(bash_bg_id: str) -> str:
-        meta = _bg_meta.get(bash_bg_id)
-        if not meta:
-            return f"Error: Task '{bash_bg_id}' not found"
+    async def _output(bash_bg_id: str) -> str:
+        async with _bg_lock:
+            meta = _bg_meta.get(bash_bg_id)
+            if not meta:
+                return f"Error: Task '{bash_bg_id}' not found"
+            # Copy values we need before releasing lock
+            output_file_str = meta["output_file"]
+            status = meta.get("status", "unknown")
 
-        output_file = Path(meta["output_file"])
+        output_file = Path(output_file_str)
         if not output_file.exists():
             return "No output yet."
 
         try:
-            with open(output_file, "r", encoding="utf-8", errors="replace") as f:
-                all_lines = f.readlines()
+            tail = ShellBgTool._DEFAULT_TAIL
 
-            total_lines = len(all_lines)
+            # Single-pass: count lines and keep last N in memory
+            with open(output_file, "r", encoding="utf-8", errors="replace") as f:
+                last_lines = deque(f, maxlen=tail)
+                total_lines = len(last_lines)
+
+                # If deque is full, we need to count remaining lines
+                if len(last_lines) == tail:
+                    for _ in f:
+                        total_lines += 1
+
             if total_lines == 0:
                 return "No output yet."
 
-            # Tail-style: take last N lines (default 50)
-            tail = ShellBgTool._DEFAULT_TAIL
-            start_idx = max(0, total_lines - tail)
-            selected = all_lines[start_idx:]
+            start_idx = max(0, total_lines - len(last_lines))
 
             # Format with line numbers
             _CRLF = "\r\n"
             formatted = []
-            for i, line in enumerate(selected, start=start_idx + 1):
+            for i, line in enumerate(last_lines, start=start_idx + 1):
                 formatted.append(f"{i:6}\t{line.rstrip(_CRLF)}")
 
             parts = ["\n".join(formatted)]
@@ -678,12 +762,11 @@ class ShellBgTool(Tool):
                 )
 
             # System reminder about the output file location
-            status = meta.get("status", "unknown")
             parts.append(
                 f"\n\n<system-reminder>\n"
                 f"Background task '{bash_bg_id}' (status: {status}).\n"
-                f"Full output file: {meta['output_file']}\n"
-                f"Read more with: tail -n 1000 \"{meta['output_file']}\" "
+                f"Full output file: {output_file_str}\n"
+                f"Read more with: tail -n 1000 \"{output_file_str}\" "
                 f"or use a file-read tool.\n"
                 f"</system-reminder>"
             )
@@ -697,41 +780,38 @@ class ShellBgTool(Tool):
 
     @staticmethod
     async def _kill(bash_bg_id: str) -> str:
-        meta = _bg_meta.get(bash_bg_id)
-        if not meta:
-            return f"Error: Task '{bash_bg_id}' not found"
+        async with _bg_lock:
+            meta = _bg_meta.get(bash_bg_id)
+            if not meta:
+                return f"Error: Task '{bash_bg_id}' not found"
 
-        process = _bg_processes.get(bash_bg_id)
+            process = _bg_processes.get(bash_bg_id)
 
-        # --- Branch A: process still running, perform kill ---
-        if process and process.returncode is None:
-            try:
-                await BashTool._kill_process(process)
-                meta["status"] = "killed"
-                meta["exit_code"] = process.returncode
-                meta["end_time"] = datetime.now().isoformat()
+            # --- Branch A: process still running, perform kill ---
+            if process and process.returncode is None:
+                try:
+                    await BashTool._kill_process(process)
+                    meta["status"] = "killed"
+                    meta["exit_code"] = process.returncode
+                    meta["end_time"] = datetime.now().isoformat()
 
-                fh = _bg_file_handles.pop(bash_bg_id, None)
-                if fh:
-                    fh.close()
+                    _close_file_handle(_bg_file_handles.pop(bash_bg_id, None))
+                    _bg_processes.pop(bash_bg_id, None)
+
+                    return f"Task '{bash_bg_id}' killed."
+
+                except Exception as e:
+                    return f"Error killing task: {e}"
+
+            # --- Branch B: process already dead ---
+            if meta.get("status") == "running":
+                rc = process.returncode if process else None
+                meta["status"] = "completed" if rc == 0 else "failed"
+                meta["exit_code"] = rc
+                if not meta.get("end_time"):
+                    meta["end_time"] = datetime.now().isoformat()
                 _bg_processes.pop(bash_bg_id, None)
-
-                return f"Task '{bash_bg_id}' killed."
-
-            except Exception as e:
-                return f"Error killing task: {e}"
-
-        # --- Branch B: process already dead ---
-        if meta.get("status") == "running":
-            rc = process.returncode if process else None
-            meta["status"] = "completed" if rc == 0 else "failed"
-            meta["exit_code"] = rc
-            if not meta.get("end_time"):
-                meta["end_time"] = datetime.now().isoformat()
-            _bg_processes.pop(bash_bg_id, None)
-            fh = _bg_file_handles.pop(bash_bg_id, None)
-            if fh:
-                fh.close()
+                _close_file_handle(_bg_file_handles.pop(bash_bg_id, None))
 
         status = meta.get("status", "unknown")
         return (
