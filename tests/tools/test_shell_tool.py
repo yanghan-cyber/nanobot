@@ -164,11 +164,12 @@ class TestBashToolExecution:
             # First arg should be the shell path
             call_args = mock_exec.call_args
             assert call_args[0][0] == "/bin/bash"
-            assert call_args[0][1] == "-c"
+            assert call_args[0][1] == "-l"
+            assert call_args[0][2] == "-c"
 
     @pytest.mark.asyncio
     async def test_build_env_is_minimal(self):
-        """Should build a minimal env with HOME, LANG, PATH, TERM, PYTHONIOENCODING."""
+        """Should build a minimal env with HOME, LANG, TERM."""
         tool = BashTool()
         with (
             patch("nanobot.agent.tools.shell._IS_WINDOWS", False),
@@ -184,9 +185,7 @@ class TestBashToolExecution:
                 env = call_kwargs.kwargs.get("env") or call_kwargs[1].get("env")
                 assert env is not None
                 assert env.get("LANG") == "C.UTF-8"
-                assert env.get("PYTHONIOENCODING") == "utf-8"
                 assert "HOME" in env
-                assert "PATH" in env
                 assert "TERM" in env
 
 

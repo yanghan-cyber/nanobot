@@ -235,6 +235,7 @@ class BashTool(Tool):
         restrict_to_workspace: bool = False,
         sandbox: str = "",
         path_append: str = "",
+        allowed_env_keys: list[str] | None = None,
     ):
         self.timeout = timeout
         self.working_dir = working_dir
@@ -253,6 +254,7 @@ class BashTool(Tool):
         self.allow_patterns = allow_patterns or []
         self.restrict_to_workspace = restrict_to_workspace
         self.path_append = path_append
+        self.allowed_env_keys = allowed_env_keys or []
 
     @property
     def name(self) -> str:
@@ -303,10 +305,14 @@ class BashTool(Tool):
         effective_timeout = min(timeout or self.timeout, self._MAX_TIMEOUT)
         env = self._build_env()
 
-        if self.path_append:
-            env["PATH"] = env.get("PATH", "") + os.pathsep + self.path_append
-
         shell = self._resolve_shell()
+        is_bash = "bash" in Path(shell).name.lower()
+
+        if self.path_append:
+            if is_bash:
+                command = f'export PATH="$PATH:{self.path_append}"; {command}'
+            else:
+                env["PATH"] = env.get("PATH", "") + os.pathsep + self.path_append
 
         if run_in_background:
             return await self._run_background(command, cwd, env, shell, purpose)
@@ -322,10 +328,11 @@ class BashTool(Tool):
         effective_timeout: int,
     ) -> str:
         try:
+            is_bash = "bash" in Path(shell).name.lower()
+            shell_args = ["-l", "-c", command] if is_bash else ["-c", command]
             process = await asyncio.create_subprocess_exec(
                 shell,
-                "-c",
-                command,
+                *shell_args,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=cwd,
@@ -386,10 +393,11 @@ class BashTool(Tool):
 
         fh = open(output_file, "wb")
 
+        is_bash = "bash" in Path(shell).name.lower()
+        shell_args = ["-l", "-c", command] if is_bash else ["-c", command]
         process = await asyncio.create_subprocess_exec(
             shell,
-            "-c",
-            command,
+            *shell_args,
             stdout=fh,
             stderr=subprocess.STDOUT,
             cwd=cwd,
@@ -459,7 +467,7 @@ class BashTool(Tool):
         """
         if _IS_WINDOWS:
             sr = os.environ.get("SYSTEMROOT", r"C:\Windows")
-            return {
+            env = {
                 "SYSTEMROOT": sr,
                 "COMSPEC": os.environ.get("COMSPEC", f"{sr}\\system32\\cmd.exe"),
                 "USERPROFILE": os.environ.get("USERPROFILE", ""),
@@ -476,14 +484,22 @@ class BashTool(Tool):
                 "ProgramFiles(x86)": os.environ.get("ProgramFiles(x86)", ""),
                 "ProgramW6432": os.environ.get("ProgramW6432", ""),
             }
+            for key in self.allowed_env_keys:
+                val = os.environ.get(key)
+                if val is not None:
+                    env[key] = val
+            return env
         home = os.environ.get("HOME", "/tmp")
-        return {
+        env = {
             "HOME": home,
             "LANG": os.environ.get("LANG", "C.UTF-8"),
-            "PATH": os.environ.get("PATH", ""),
             "TERM": os.environ.get("TERM", "dumb"),
-            "PYTHONIOENCODING": "utf-8",
         }
+        for key in self.allowed_env_keys:
+            val = os.environ.get(key)
+            if val is not None:
+                env[key] = val
+        return env
 
     @staticmethod
     def _resolve_shell() -> str:

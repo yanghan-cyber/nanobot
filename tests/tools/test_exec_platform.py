@@ -27,7 +27,7 @@ class TestBuildEnvUnix:
     def test_expected_keys(self):
         with patch("nanobot.agent.tools.shell._IS_WINDOWS", False):
             env = BashTool()._build_env()
-        expected = {"HOME", "LANG", "TERM", "PATH", "PYTHONIOENCODING"}
+        expected = {"HOME", "LANG", "TERM"}
         assert expected <= set(env)
         if sys.platform != "win32":
             assert set(env) == expected
@@ -94,16 +94,16 @@ class TestBuildEnvWindows:
 class TestPathAppendPlatform:
 
     @pytest.mark.asyncio
-    async def test_path_append_added_to_env(self):
-        """path_append is appended to PATH in the env dict via os.pathsep."""
+    async def test_path_append_injected_into_command(self):
+        """path_append is injected into command via export for bash."""
         mock_proc = AsyncMock()
         mock_proc.communicate.return_value = (b"ok", b"")
         mock_proc.returncode = 0
 
-        captured_env = {}
+        captured_args = []
 
         async def capture_spawn(*args, **kwargs):
-            captured_env.update(kwargs.get("env", {}))
+            captured_args.extend(args)
             return mock_proc
 
         with (
@@ -115,7 +115,10 @@ class TestPathAppendPlatform:
             tool = BashTool(path_append="/opt/bin")
             await tool.execute(command="ls")
 
-        assert "/opt/bin" in captured_env.get("PATH", "")
+        # command arg should contain the export prefix
+        command_arg = captured_args[-1]
+        assert 'export PATH="$PATH:/opt/bin"' in command_arg
+        assert "ls" in command_arg
 
 
 # ---------------------------------------------------------------------------

@@ -248,6 +248,7 @@ class AgentLoop:
                     restrict_to_workspace=self.restrict_to_workspace,
                     sandbox=self.bash_config.sandbox,
                     path_append=self.bash_config.path_append,
+                    allowed_env_keys=self.bash_config.allowed_env_keys,
                 )
             )
             self.tools.register(ShellBgTool(

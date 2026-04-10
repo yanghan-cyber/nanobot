@@ -38,8 +38,39 @@ async def test_bash_path_append():
 
 @_UNIX_ONLY
 @pytest.mark.asyncio
-async def test_bash_path_append_preserves_system_path():
-    """pathAppend must not clobber standard system paths."""
-    tool = BashTool(path_append="/opt/custom/bin")
+async def test_bash_path_append_with_allowed_env_keys():
+    """pathAppend + allowed_env_keys for PATH should make system commands available."""
+    tool = BashTool(path_append="/opt/custom/bin", allowed_env_keys=["PATH"])
     result = await tool.execute(command="ls /")
     assert "Exit code: 0" in result
+
+
+@_UNIX_ONLY
+@pytest.mark.asyncio
+async def test_exec_allowed_env_keys_passthrough(monkeypatch):
+    """Env vars listed in allowed_env_keys should be visible to commands."""
+    monkeypatch.setenv("MY_CUSTOM_VAR", "hello-from-config")
+    tool = BashTool(allowed_env_keys=["MY_CUSTOM_VAR"])
+    result = await tool.execute(command="printenv MY_CUSTOM_VAR")
+    assert "hello-from-config" in result
+
+
+@_UNIX_ONLY
+@pytest.mark.asyncio
+async def test_exec_allowed_env_keys_does_not_leak_others(monkeypatch):
+    """Env vars NOT in allowed_env_keys should still be blocked."""
+    monkeypatch.setenv("MY_CUSTOM_VAR", "hello-from-config")
+    monkeypatch.setenv("MY_SECRET_VAR", "secret-value")
+    tool = BashTool(allowed_env_keys=["MY_CUSTOM_VAR"])
+    result = await tool.execute(command="printenv MY_SECRET_VAR")
+    assert "secret-value" not in result
+
+
+@_UNIX_ONLY
+@pytest.mark.asyncio
+async def test_exec_allowed_env_keys_missing_var_ignored(monkeypatch):
+    """If an allowed key is not set in the parent process, it should be silently skipped."""
+    monkeypatch.delenv("NONEXISTENT_VAR_12345", raising=False)
+    tool = BashTool(allowed_env_keys=["NONEXISTENT_VAR_12345"])
+    result = await tool.execute(command="printenv NONEXISTENT_VAR_12345")
+    assert "Exit code: 1" in result
