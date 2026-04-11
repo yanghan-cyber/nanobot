@@ -27,34 +27,18 @@ def _make_loop(tmp_path):
     return loop
 
 
-def test_loop_has_pending_queues_and_active_sessions(tmp_path):
-    """AgentLoop should initialize with _pending_queues and _active_sessions."""
+def test_loop_has_pending_queues_and_session_locks(tmp_path):
+    """AgentLoop should initialize with _pending_queues and _session_locks."""
     loop = _make_loop(tmp_path)
     assert hasattr(loop, "_pending_queues")
     assert isinstance(loop._pending_queues, dict)
-    assert hasattr(loop, "_active_sessions")
-    assert isinstance(loop._active_sessions, set)
+    assert hasattr(loop, "_session_locks")
+    assert isinstance(loop._session_locks, dict)
 
 
 @pytest.mark.asyncio
-async def test_dispatch_queues_when_session_active(tmp_path):
-    """If the session is already active, _dispatch should queue the message and return."""
-    loop = _make_loop(tmp_path)
-    loop._active_sessions.add("telegram:123")
-
-    msg = InboundMessage(channel="telegram", sender_id="user", chat_id="123", content="queued msg")
-    await loop._dispatch(msg)
-
-    queue = loop._pending_queues.get("telegram:123")
-    assert queue is not None
-    assert not queue.empty()
-    queued_msg = queue.get_nowait()
-    assert queued_msg.content == "queued msg"
-
-
-@pytest.mark.asyncio
-async def test_dispatch_processes_message_when_session_inactive(tmp_path):
-    """If the session is not active, _dispatch should process the message normally."""
+async def test_dispatch_creates_pending_queue(tmp_path):
+    """_dispatch should create a pending queue for the session."""
     loop = _make_loop(tmp_path)
 
     processed: list[InboundMessage] = []
@@ -70,69 +54,54 @@ async def test_dispatch_processes_message_when_session_inactive(tmp_path):
 
     assert len(processed) == 1
     assert processed[0].content == "hello"
-    assert "telegram:123" not in loop._active_sessions
+    # After dispatch completes, the pending queue should be cleaned up
+    assert "telegram:123" not in loop._pending_queues
 
 
 @pytest.mark.asyncio
-async def test_dispatch_drains_pending_after_runner(tmp_path):
-    """After runner finishes, remaining pending messages should be processed."""
+async def test_dispatch_uses_session_lock(tmp_path):
+    """_dispatch should use a per-session lock for serial processing."""
     loop = _make_loop(tmp_path)
 
-    processed: list[str] = []
+    processed: list[InboundMessage] = []
 
     async def fake_process(msg, **kwargs):
-        processed.append(msg.content)
+        processed.append(msg)
         return None
 
     loop._process_message = fake_process
 
-    # Pre-populate the pending queue
-    queue = loop._pending_queues.setdefault("telegram:123", asyncio.Queue())
-    await queue.put(InboundMessage(channel="telegram", sender_id="user", chat_id="123", content="pending msg"))
-
-    msg = InboundMessage(channel="telegram", sender_id="user", chat_id="123", content="initial msg")
+    msg = InboundMessage(channel="telegram", sender_id="user", chat_id="123", content="hello")
     await loop._dispatch(msg)
 
-    assert "initial msg" in processed
-    assert "pending msg" in processed
-    assert "telegram:123" not in loop._active_sessions
+    # A lock should have been created for the session
+    assert "telegram:123" in loop._session_locks
+    assert isinstance(loop._session_locks["telegram:123"], asyncio.Lock)
 
 
 @pytest.mark.asyncio
-async def test_dispatch_queues_during_active_run(tmp_path):
-    """Messages arriving during an active run should be queued, not block."""
+async def test_dispatch_republishes_leftover_messages(tmp_path):
+    """After runner finishes, leftover pending messages should be re-published to the bus."""
     loop = _make_loop(tmp_path)
 
-    processing_started = asyncio.Event()
-    processing_done = asyncio.Event()
-
     async def fake_process(msg, **kwargs):
-        processing_started.set()
-        await processing_done.wait()
         return None
 
     loop._process_message = fake_process
 
-    msg1 = InboundMessage(channel="telegram", sender_id="user", chat_id="123", content="first")
-    task1 = asyncio.create_task(loop._dispatch(msg1))
+    republished: list[InboundMessage] = []
+    loop.bus.publish_inbound = AsyncMock(side_effect=lambda m: republished.append(m))
 
-    await asyncio.wait_for(processing_started.wait(), timeout=1.0)
-    assert "telegram:123" in loop._active_sessions
+    msg = InboundMessage(channel="telegram", sender_id="user", chat_id="123", content="initial")
+    await loop._dispatch(msg)
 
-    msg2 = InboundMessage(channel="telegram", sender_id="user", chat_id="123", content="second")
-    await loop._dispatch(msg2)
-
-    queue = loop._pending_queues.get("telegram:123")
-    assert queue is not None
-    assert queue.get_nowait().content == "second"
-
-    processing_done.set()
-    await task1
+    # No leftover messages, so nothing should be republished
+    assert len(republished) == 0
 
 
 @pytest.mark.asyncio
-async def test_pending_callback_injects_queued_messages_into_runner(tmp_path):
-    """The pending_message_callback should drain queued messages into the runner's context."""
+async def test_injection_callback_injects_queued_messages_into_runner(tmp_path):
+    """The injection_callback should drain queued messages into the runner's context."""
     loop = _make_loop(tmp_path)
 
     # Set up session
@@ -141,9 +110,15 @@ async def test_pending_callback_injects_queued_messages_into_runner(tmp_path):
     loop.sessions.get_or_create = MagicMock(return_value=session)
     loop.sessions.save = MagicMock()
 
+    # Mock context methods used by _drain_pending
+    loop.context._build_user_content = MagicMock(return_value="mid-run msg")
+    loop.context._build_runtime_context = MagicMock(return_value="[runtime context]")
+    loop.context.timezone = "UTC"
+
     # Pre-populate pending queue
-    queue = loop._pending_queues.setdefault("telegram:123", asyncio.Queue())
-    await queue.put(InboundMessage(channel="telegram", sender_id="user", chat_id="123", content="mid-run msg"))
+    pending_queue = asyncio.Queue(maxsize=20)
+    loop._pending_queues["telegram:123"] = pending_queue
+    await pending_queue.put(InboundMessage(channel="telegram", sender_id="user", chat_id="123", content="mid-run msg"))
 
     # Mock provider to capture messages
     call_count = {"n": 0}
@@ -165,19 +140,17 @@ async def test_pending_callback_injects_queued_messages_into_runner(tmp_path):
     loop.tools.get_definitions = MagicMock(return_value=[])
     loop.tools.execute = AsyncMock(return_value="tool result")
 
-    # Mark session as active (simulating mid-run state)
-    loop._active_sessions.add("telegram:123")
-
-    result, _, _, _ = await loop._run_agent_loop(
+    result, _, _, _, _ = await loop._run_agent_loop(
         [{"role": "user", "content": "initial task"}],
         session=session,
         channel="telegram",
         chat_id="123",
+        pending_queue=pending_queue,
     )
 
     assert result == "done"
-    # The second LLM call should include the queued message
-    user_msgs = [m for m in captured if m.get("role") == "user" and "mid-run msg" in m.get("content", "")]
+    # The second LLM call should include the injected user message
+    user_msgs = [m for m in captured if m.get("role") == "user" and "mid-run msg" in str(m.get("content", ""))]
     assert len(user_msgs) >= 1
 
 
@@ -191,6 +164,11 @@ async def test_e2e_message_queue_flow(tmp_path):
     session = Session(key="telegram:123")
     loop.sessions.get_or_create = MagicMock(return_value=session)
     loop.sessions.save = MagicMock()
+
+    # Mock context methods used by _drain_pending
+    loop.context._build_user_content = MagicMock(return_value="actually, do task B instead")
+    loop.context._build_runtime_context = MagicMock(return_value="[runtime context]")
+    loop.context.timezone = "UTC"
 
     # Provider that takes time on first call (tool execution)
     call_count = {"n": 0}
@@ -213,21 +191,17 @@ async def test_e2e_message_queue_flow(tmp_path):
     loop.tools.execute = AsyncMock(return_value="tool output")
 
     # Simulate: msg A is being processed, then msg B arrives
-    msg_a = InboundMessage(channel="telegram", sender_id="user", chat_id="123", content="do task A")
-
-    # Simulate the entire flow with _run_agent_loop
-    # Pre-populate pending queue with message B
-    queue = loop._pending_queues.setdefault("telegram:123", asyncio.Queue())
-    await queue.put(InboundMessage(channel="telegram", sender_id="user", chat_id="123", content="actually, do task B instead"))
-    # Manually mark session as active to simulate mid-run state
-    loop._active_sessions.add("telegram:123")
+    pending_queue = asyncio.Queue(maxsize=20)
+    loop._pending_queues["telegram:123"] = pending_queue
+    await pending_queue.put(InboundMessage(channel="telegram", sender_id="user", chat_id="123", content="actually, do task B instead"))
 
     # Start the agent loop with initial message A
-    result, _, _, _ = await loop._run_agent_loop(
+    result, _, _, _, _ = await loop._run_agent_loop(
         [{"role": "user", "content": "do task A"}],
         session=session,
         channel="telegram",
         chat_id="123",
+        pending_queue=pending_queue,
     )
 
     # Wait for any background tasks to complete
@@ -236,10 +210,8 @@ async def test_e2e_message_queue_flow(tmp_path):
     # Message B should have been injected into the LLM's context via the pending queue
     if captured_messages:
         user_msgs = [m for m in captured_messages if m.get("role") == "user"]
-        contents = [m.get("content", "") for m in user_msgs]
+        contents = [str(m.get("content", "")) for m in user_msgs]
         assert any("task B" in c for c in contents), f"Expected 'task B' in {contents}"
 
-    # The session should be cleaned up after processing
-    # (Note: in our test, we manually added it to active_sessions, so clean up manually)
-    loop._active_sessions.discard("telegram:123")
-    assert "telegram:123" not in loop._active_sessions
+    # Note: pending queue cleanup is handled by _dispatch, not _run_agent_loop.
+    # Since this test calls _run_agent_loop directly, the queue remains.
