@@ -308,6 +308,7 @@ class FeishuChannel(BaseChannel):
         self._processed_message_ids: OrderedDict[str, None] = OrderedDict()  # Ordered dedup cache
         self._loop: asyncio.AbstractEventLoop | None = None
         self._stream_bufs: dict[str, _FeishuStreamBuf] = {}
+        self._active_reactions: dict[str, list[tuple[str, str]]] = {}
         self._bot_open_id: str | None = None
 
     @staticmethod
@@ -1304,13 +1305,14 @@ class FeishuChannel(BaseChannel):
 
         # --- stream end: final update or fallback ---
         if meta.get("_stream_end"):
-            if (message_id := meta.get("message_id")) and (reaction_id := meta.get("reaction_id")):
-                await self._remove_reaction(message_id, reaction_id)
-                # Add completion emoji if configured
-                if self.config.done_emoji and message_id:
-                    await self._add_reaction(message_id, self.config.done_emoji)
-
             resuming = meta.get("_resuming", False)
+
+            # Only swap reaction on true completion, not mid-turn pauses (e.g. tool calls).
+            if not resuming:
+                for mid, rid in self._active_reactions.pop(chat_id, []):
+                    await self._remove_reaction(mid, rid)
+                    if self.config.done_emoji:
+                        await self._add_reaction(mid, self.config.done_emoji)
             if resuming:
                 # Mid-turn pause (e.g. tool call between streaming segments).
                 # Flush current text to card but keep the buffer alive so the
@@ -1628,6 +1630,8 @@ class FeishuChannel(BaseChannel):
 
             # Forward to message bus
             reply_to = chat_id if chat_type == "group" else sender_id
+            if reaction_id:
+                self._active_reactions.setdefault(reply_to, []).append((message_id, reaction_id))
             await self._handle_message(
                 sender_id=sender_id,
                 chat_id=reply_to,
