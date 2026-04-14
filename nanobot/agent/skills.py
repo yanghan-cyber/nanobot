@@ -16,10 +16,6 @@ _STRIP_SKILL_FRONTMATTER = re.compile(
 )
 
 
-def _escape_xml(text: str) -> str:
-    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
-
 class SkillsLoader:
     """
     Loader for agent skills.
