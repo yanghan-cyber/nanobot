@@ -181,6 +181,19 @@ class LLMProvider(ABC):
                         changed = True
                     else:
                         new_items.append(item)
+                # tool messages must have string content (OpenAI API requirement)
+                if msg.get("role") == "tool":
+                    parts = []
+                    for item in new_items:
+                        if isinstance(item, dict) and item.get("type") == "text":
+                            parts.append(item.get("text", ""))
+                        elif isinstance(item, dict) and item.get("type") == "image_url":
+                            path = (item.get("_meta") or {}).get("path", "")
+                            parts.append(f"[image: {path}]" if path else "[image]")
+                    clean = dict(msg)
+                    clean["content"] = "\n".join(parts) if parts else "(empty)"
+                    result.append(clean)
+                    continue
                 if changed:
                     clean = dict(msg)
                     if new_items:
@@ -707,8 +720,8 @@ class LLMProvider(ABC):
                     result = await call(**retry_kw)
                     # Permanently strip images from the original messages so
                     # subsequent iterations do not repeat the error-retry cycle.
-                    if result.finish_reason != "error":
-                        self._strip_image_content_inplace(original_messages)
+                    # Always strip even on error to prevent session corruption.
+                    self._strip_image_content_inplace(original_messages)
                     return result
                 return response
 
