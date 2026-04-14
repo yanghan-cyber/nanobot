@@ -349,3 +349,73 @@ def test_get_skill_path_workspace_takes_priority(tmp_path: Path) -> None:
     result = loader.get_skill_path("dup")
     assert result is not None
     assert result == ws_path
+
+
+def test_build_skills_summary_compact_format(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    ws_skills = workspace / "skills"
+    ws_skills.mkdir(parents=True)
+    skill_dir = ws_skills / "tmux"
+    skill_dir.mkdir(parents=True)
+    skill_path = skill_dir / "SKILL.md"
+    skill_path.write_text(
+        "---\nname: tmux\ndescription: Remote-control tmux sessions.\n---\n\n# tmux\n",
+        encoding="utf-8",
+    )
+    builtin = tmp_path / "builtin"
+    builtin.mkdir()
+
+    loader = SkillsLoader(workspace, builtin_skills_dir=builtin)
+    summary = loader.build_skills_summary()
+    assert "- tmux: Remote-control tmux sessions." in summary
+    assert "<skill>" not in summary
+    assert "<location>" not in summary
+
+
+def test_build_skills_summary_unavailable_annotation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    workspace = tmp_path / "ws"
+    ws_skills = workspace / "skills"
+    ws_skills.mkdir(parents=True)
+    skill_dir = ws_skills / "summarize"
+    skill_dir.mkdir(parents=True)
+    skill_path = skill_dir / "SKILL.md"
+    payload = json.dumps({"nanobot": {"requires": {"bins": ["summarize"]}}}, separators=(",", ":"))
+    skill_path.write_text(
+        f"---\nname: summarize\ndescription: Summarize text.\nmetadata: {payload}\n---\n\n# Summarize\n",
+        encoding="utf-8",
+    )
+    builtin = tmp_path / "builtin"
+    builtin.mkdir()
+
+    monkeypatch.setattr("nanobot.agent.skills.shutil.which", lambda cmd: None)
+
+    loader = SkillsLoader(workspace, builtin_skills_dir=builtin)
+    summary = loader.build_skills_summary()
+    assert "unavailable" in summary
+    assert "needs CLI 'summarize'" in summary
+
+
+def test_build_skills_summary_empty(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    builtin = tmp_path / "builtin"
+    builtin.mkdir()
+
+    loader = SkillsLoader(workspace, builtin_skills_dir=builtin)
+    assert loader.build_skills_summary() == ""
+
+
+def test_build_skills_summary_no_description_uses_name(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    ws_skills = workspace / "skills"
+    ws_skills.mkdir(parents=True)
+    skill_dir = ws_skills / "plain"
+    skill_dir.mkdir(parents=True)
+    skill_path = skill_dir / "SKILL.md"
+    skill_path.write_text("---\n---\n\n# Plain\n", encoding="utf-8")
+    builtin = tmp_path / "builtin"
+    builtin.mkdir()
+
+    loader = SkillsLoader(workspace, builtin_skills_dir=builtin)
+    summary = loader.build_skills_summary()
+    assert "- plain: plain" in summary

@@ -127,37 +127,27 @@ class SkillsLoader:
 
     def build_skills_summary(self) -> str:
         """
-        Build a summary of all skills (name, description, path, availability).
+        Build a compact one-line-per-skill summary.
 
-        This is used for progressive loading - the agent can read the full
-        skill content using read_file when needed.
-
-        Returns:
-            XML-formatted skills summary.
+        Available skills: ``- name: description``
+        Unavailable skills: ``- name (unavailable: needs CLI 'x'): description``
         """
         all_skills = self.list_skills(filter_unavailable=False)
         if not all_skills:
             return ""
 
-        lines: list[str] = ["<skills>"]
+        lines: list[str] = []
         for entry in all_skills:
             skill_name = entry["name"]
             meta = self._get_skill_meta(skill_name)
             available = self._check_requirements(meta)
-            lines.extend(
-                [
-                    f'  <skill available="{str(available).lower()}">',
-                    f"    <name>{_escape_xml(skill_name)}</name>",
-                    f"    <description>{_escape_xml(self._get_skill_description(skill_name))}</description>",
-                    f"    <location>{entry['path']}</location>",
-                ]
-            )
-            if not available:
+            description = self._get_skill_description(skill_name)
+
+            if available:
+                lines.append(f"- {skill_name}: {description}")
+            else:
                 missing = self._get_missing_requirements(meta)
-                if missing:
-                    lines.append(f"    <requires>{_escape_xml(missing)}</requires>")
-            lines.append("  </skill>")
-        lines.append("</skills>")
+                lines.append(f"- {skill_name} (unavailable: {missing}): {description}")
         return "\n".join(lines)
 
     def _get_missing_requirements(self, skill_meta: dict) -> str:
@@ -166,8 +156,8 @@ class SkillsLoader:
         required_bins = requires.get("bins", [])
         required_env_vars = requires.get("env", [])
         return ", ".join(
-            [f"CLI: {command_name}" for command_name in required_bins if not shutil.which(command_name)]
-            + [f"ENV: {env_name}" for env_name in required_env_vars if not os.environ.get(env_name)]
+            [f"needs CLI '{command_name}'" for command_name in required_bins if not shutil.which(command_name)]
+            + [f"needs ENV '{env_name}'" for env_name in required_env_vars if not os.environ.get(env_name)]
         )
 
     def _get_skill_description(self, name: str) -> str:
