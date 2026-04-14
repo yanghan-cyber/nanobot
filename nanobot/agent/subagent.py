@@ -162,10 +162,10 @@ class SubagentManager:
                     initial_messages=messages,
                     tools=tools,
                     model=self.model,
-                    max_iterations=15,
+                    max_iterations=50,
                     max_tool_result_chars=self.max_tool_result_chars,
                     hook=_SubagentHook(task_id),
-                    max_iterations_message="Task completed but no final response was generated.",
+                    max_iterations_message="You have reached the maximum number of iterations. Summarize what you have found so far and provide your best answer based on the research completed.",
                     error_message=None,
                     fail_on_tool_error=True,
                 )
