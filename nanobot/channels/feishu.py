@@ -1304,10 +1304,11 @@ class FeishuChannel(BaseChannel):
 
         # --- stream end: final update or fallback ---
         if meta.get("_stream_end"):
-            for mid, rid in self._active_reactions.pop(chat_id, []):
-                await self._remove_reaction(mid, rid)
-                if self.config.done_emoji:
-                    await self._add_reaction(mid, self.config.done_emoji)
+            if not meta.get("_resuming"):
+                for mid, rid in self._active_reactions.pop(chat_id, []):
+                    await self._remove_reaction(mid, rid)
+                    if self.config.done_emoji:
+                        await self._add_reaction(mid, self.config.done_emoji)
 
             buf = self._stream_bufs.pop(chat_id, None)
             if not buf or not buf.text:

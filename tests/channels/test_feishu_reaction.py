@@ -227,6 +227,30 @@ class TestStreamEndReactionCleanup:
         ch._remove_reaction.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_no_removal_when_resuming(self):
+        """Mid-turn pause (e.g. tool call) should NOT remove reaction or add done emoji."""
+        ch = _make_channel()
+        ch.config.done_emoji = "DONE"
+        ch._stream_bufs["oc_chat1"] = _FeishuStreamBuf(
+            text="working...", card_id="card_1", sequence=3, last_edit=0.0,
+        )
+        ch._client.cardkit.v1.card_element.content.return_value = MagicMock(success=MagicMock(return_value=True))
+        ch._client.cardkit.v1.card.settings.return_value = MagicMock(success=MagicMock(return_value=True))
+        ch._remove_reaction = AsyncMock()
+        ch._add_reaction = AsyncMock()
+        ch._active_reactions["oc_chat1"] = [("om_001", "rx_42")]
+
+        await ch.send_delta(
+            "oc_chat1", "",
+            metadata={"_stream_end": True, "_resuming": True},
+        )
+
+        ch._remove_reaction.assert_not_called()
+        ch._add_reaction.assert_not_called()
+        # Reactions should remain tracked for final cleanup later
+        assert ch._active_reactions["oc_chat1"] == [("om_001", "rx_42")]
+
+    @pytest.mark.asyncio
     async def test_removes_reaction_and_adds_done_emoji_on_final_end(self):
         """True completion should remove reaction and add done emoji."""
         ch = _make_channel()
