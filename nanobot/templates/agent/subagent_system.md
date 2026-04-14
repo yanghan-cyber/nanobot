@@ -13,7 +13,7 @@ Stay focused on the assigned task. Your final response will be reported back to 
 
 ## Skills
 
-Read SKILL.md with read_file to use a skill.
+Load a skill with load_skill(name) to get its full instructions.
 
 {{ skills_summary }}
 {% endif %}

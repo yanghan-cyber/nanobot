@@ -10,8 +10,9 @@ from loguru import logger
 
 from nanobot.agent.hook import AgentHook, AgentHookContext
 from nanobot.agent.runner import AgentRunner, AgentRunSpec
-from nanobot.agent.skills import BUILTIN_SKILLS_DIR
+from nanobot.agent.skills import SkillsLoader, BUILTIN_SKILLS_DIR
 from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
+from nanobot.agent.tools.skill import LoadSkillTool
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.tools.search import GlobTool, GrepTool
 from nanobot.agent.tools.shell import BashTool, ShellBgTool
@@ -145,7 +146,12 @@ class SubagentManager:
                     WebSearchTool(config=self.web_config.search, proxy=self.web_config.proxy)
                 )
                 tools.register(WebFetchTool(proxy=self.web_config.proxy))
-            system_prompt = self._build_subagent_prompt()
+            skills_loader = SkillsLoader(
+                self.workspace,
+                disabled_skills=self.disabled_skills,
+            )
+            tools.register(LoadSkillTool(skills_loader=skills_loader))
+            system_prompt = self._build_subagent_prompt(skills_loader=skills_loader)
             messages: list[dict[str, Any]] = [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": task},
@@ -254,16 +260,17 @@ class SubagentManager:
             lines.append(f"- {result.error}")
         return "\n".join(lines) or (result.error or "Error: subagent execution failed.")
 
-    def _build_subagent_prompt(self) -> str:
+    def _build_subagent_prompt(self, skills_loader: SkillsLoader | None = None) -> str:
         """Build a focused system prompt for the subagent."""
         from nanobot.agent.context import ContextBuilder
-        from nanobot.agent.skills import SkillsLoader
 
         time_ctx = ContextBuilder._build_runtime_context(None, None)
-        skills_summary = SkillsLoader(
-            self.workspace,
-            disabled_skills=self.disabled_skills,
-        ).build_skills_summary()
+        if skills_loader is None:
+            skills_loader = SkillsLoader(
+                self.workspace,
+                disabled_skills=self.disabled_skills,
+            )
+        skills_summary = skills_loader.build_skills_summary()
         return render_template(
             "agent/subagent_system.md",
             time_ctx=time_ctx,
