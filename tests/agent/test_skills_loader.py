@@ -310,3 +310,42 @@ def test_disabled_skills_excluded_from_get_always_skills(tmp_path: Path) -> None
     always = loader.get_always_skills()
     assert "alpha" not in always
     assert "beta" in always
+
+
+def test_get_skill_path_returns_path_for_workspace_skill(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    ws_skills = workspace / "skills"
+    ws_skills.mkdir(parents=True)
+    _write_skill(ws_skills, "alpha", body="# Alpha")
+    builtin = tmp_path / "builtin"
+    builtin.mkdir()
+
+    loader = SkillsLoader(workspace, builtin_skills_dir=builtin)
+    result = loader.get_skill_path("alpha")
+    assert result is not None
+    assert result.name == "SKILL.md"
+    assert "alpha" in str(result)
+
+
+def test_get_skill_path_returns_none_for_missing(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    builtin = tmp_path / "builtin"
+    builtin.mkdir()
+
+    loader = SkillsLoader(workspace, builtin_skills_dir=builtin)
+    assert loader.get_skill_path("nonexistent") is None
+
+
+def test_get_skill_path_workspace_takes_priority(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    ws_skills = workspace / "skills"
+    ws_skills.mkdir(parents=True)
+    ws_path = _write_skill(ws_skills, "dup", body="# Workspace")
+    builtin = tmp_path / "builtin"
+    _write_skill(builtin, "dup", body="# Builtin")
+
+    loader = SkillsLoader(workspace, builtin_skills_dir=builtin)
+    result = loader.get_skill_path("dup")
+    assert result is not None
+    assert result == ws_path

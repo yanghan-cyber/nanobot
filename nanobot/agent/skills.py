@@ -93,6 +93,21 @@ class SkillsLoader:
                 return path.read_text(encoding="utf-8")
         return None
 
+    def get_skill_path(self, name: str) -> Path | None:
+        """Resolve the SKILL.md path for a skill by name.
+
+        Workspace skills take priority over builtin skills.
+        Returns None if the skill does not exist.
+        """
+        roots = [self.workspace_skills]
+        if self.builtin_skills:
+            roots.append(self.builtin_skills)
+        for root in roots:
+            path = root / name / "SKILL.md"
+            if path.exists():
+                return path
+        return None
+
     def load_skills_for_context(self, skill_names: list[str]) -> str:
         """
         Load specific skills for inclusion in agent context.
