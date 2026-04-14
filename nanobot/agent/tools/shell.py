@@ -305,11 +305,32 @@ class BashTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Execute a shell command and return its output. "
-            "Prefer read_file/write_file/edit_file over cat/echo/sed, "
-            "and grep/glob over shell find/grep. "
-            "Use -y or --yes flags to avoid interactive prompts. "
-            "Output is truncated at 10 000 chars; timeout defaults to 60s."
+            "Executes a given bash command and returns its output.\n"
+            "\n"
+            "The working directory persists between commands, but shell state does not. "
+            "The shell environment is initialized from the user's profile (login shell).\n"
+            "\n"
+            "IMPORTANT: Avoid using this tool to run `find`, `grep`, `cat`, `head`, "
+            "`tail`, `sed`, `awk`, or `echo` commands, unless explicitly instructed or "
+            "after you have verified that a dedicated tool cannot accomplish your task. "
+            "Instead, use the appropriate dedicated tool as this will provide a much "
+            "better experience for the user:\n"
+            "\n"
+            " - File search: Use glob (NOT find or ls)\n"
+            " - Content search: Use grep (NOT shell grep or rg)\n"
+            " - Read files: Use read_file (NOT cat/head/tail)\n"
+            " - Edit files: Use edit_file (NOT sed/awk)\n"
+            " - Write files: Use write_file (NOT echo >/cat <<EOF)\n"
+            " - List directory: Use list_dir (NOT ls)\n"
+            "\n"
+            "Only use this tool for system commands and terminal operations that require "
+            "shell execution. If you are unsure and there is a relevant dedicated tool, "
+            "default to using the dedicated tool and only fallback on using this tool "
+            "when it is absolutely necessary.\n"
+            "\n"
+            "Output is truncated at 10,000 chars. Timeout defaults to 60s (max 600s). "
+            "Use run_in_background=true for long-running commands like servers, builds, "
+            "or watches — returns a bg_id for tracking with shell_bg."
         )
 
     @property

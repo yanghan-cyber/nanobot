@@ -123,11 +123,29 @@ class ReadFileTool(_FsTool):
     @property
     def description(self) -> str:
         return (
-            "Read a file (text or image). Text output format: LINE_NUM|CONTENT. "
-            "Images return visual content for analysis. "
-            "Use offset and limit for large files. "
-            "Cannot read non-image binary files. "
-            "Reads exceeding ~128K chars are truncated."
+            "Reads a file from the local filesystem. You can access any file "
+            "directly by using this tool.\n"
+            "\n"
+            "By default, it reads up to 2000 lines starting from the beginning of "
+            "the file. When you already know which part of the file you need, only "
+            "read that part. This can be important for larger files.\n"
+            "\n"
+            "Results are returned in 'LINE_NUM| CONTENT' format, with line numbers "
+            "starting at 1.\n"
+            "\n"
+            "This tool can read images (eg PNG, JPG, etc). When reading an image file "
+            "the contents are presented visually for analysis.\n"
+            "\n"
+            "This tool can read PDF files (.pdf). For large PDFs (more than 10 pages), "
+            "you MUST provide the pages parameter to read specific page ranges "
+            "(e.g., pages='1-5'). Maximum 20 pages per request.\n"
+            "\n"
+            "This tool can only read files, not directories. To read a directory, use "
+            "the list_dir tool instead.\n"
+            "\n"
+            "If a file was already read with the same offset/limit and its content "
+            "hasn't changed (same mtime), a stub message is returned instead of "
+            "re-reading. Reads exceeding ~128K chars are truncated."
         )
 
     @property
@@ -275,9 +293,16 @@ class WriteFileTool(_FsTool):
     @property
     def description(self) -> str:
         return (
-            "Write content to a file. Overwrites if the file already exists; "
-            "creates parent directories as needed. "
-            "For partial edits, prefer edit_file instead."
+            "Writes a file to the local filesystem.\n"
+            "\n"
+            "Usage:\n"
+            " - This tool will overwrite the existing file if there is one at the "
+            "provided path.\n"
+            " - For existing files, prefer using read_file first to understand current "
+            "content before overwriting.\n"
+            " - Prefer the edit_file tool for partial modifications — it only sends "
+            "the diff. Only use this tool for complete rewrites.\n"
+            " - Creates parent directories as needed."
         )
 
     async def execute(self, path: str | None = None, content: str | None = None, **kwargs: Any) -> str:
@@ -588,10 +613,28 @@ class EditFileTool(_FsTool):
     @property
     def description(self) -> str:
         return (
-            "Edit a file by replacing old_text with new_text. "
-            "Tolerates minor whitespace/indentation differences and curly/straight quote mismatches. "
-            "If old_text matches multiple times, you must provide more context "
-            "or set replace_all=true. Shows a diff of the closest match on failure."
+            "Performs exact string replacements in files.\n"
+            "\n"
+            "Usage:\n"
+            " - You must use the read_file tool at least once in the conversation "
+            "before editing. A warning will be shown if the file hasn't been read, "
+            "and another warning if it was modified since last read.\n"
+            " - When editing text from read_file tool output, ensure you preserve the "
+            "exact indentation (tabs/spaces) as it appears AFTER the line number prefix. "
+            "The line number prefix format is: line number + '|'. Everything after "
+            "that is the actual file content to match. Never include any part of the "
+            "line number prefix in the old_text or new_text.\n"
+            " - ALWAYS prefer editing existing files in the codebase. NEVER write new "
+            "files unless explicitly required.\n"
+            " - The edit will not be applied if old_text is not unique in the file — "
+            "a warning will list the match locations. Either provide "
+            "a larger string with more surrounding context to make it unique or use "
+            "replace_all to change every instance of old_text.\n"
+            " - Use replace_all for replacing and renaming strings across the file. "
+            "This parameter is useful if you want to rename a variable for instance.\n"
+            " - Tolerates minor whitespace/indentation differences and curly/straight "
+            "quote mismatches via fallback matching. Shows a diff of the closest match "
+            "on failure."
         )
 
     @staticmethod
@@ -775,9 +818,14 @@ class ListDirTool(_FsTool):
     @property
     def description(self) -> str:
         return (
-            "List the contents of a directory. "
+            "List the contents of a directory.\n"
+            "\n"
             "Set recursive=true to explore nested structure. "
-            "Common noise directories (.git, node_modules, __pycache__, etc.) are auto-ignored."
+            "Common noise directories (.git, node_modules, __pycache__, etc.) are "
+            "automatically skipped.\n"
+            "\n"
+            "This tool can only read directories, not files. To read a file, use the "
+            "read_file tool instead."
         )
 
     @property

@@ -60,13 +60,18 @@ class GlobTool(_SearchTool):
     @property
     def description(self) -> str:
         return (
-            "Fast file pattern matching tool powered by ripgrep. "
+            "Fast file pattern matching tool that works with any codebase size.\n"
+            "\n"
             "Supports glob patterns like '**/*.js' or 'src/**/*.ts'. "
             "Returns matching file paths sorted by modification time (newest first). "
-            "Skips .git, node_modules, __pycache__, and other noise directories. "
-            "Use this tool when you need to find files by name patterns. "
-            "When doing open-ended searches needing multiple rounds of "
-            "globbing and grepping, use subagent instead."
+            "Use this tool when you need to quickly find files by name patterns.\n"
+            "\n"
+            "When you are doing an open-ended search that may require multiple rounds "
+            "of globbing and grepping, use the spawn tool instead — it is better "
+            "suited for broad, multi-step exploration of the codebase.\n"
+            "\n"
+            "Common noise directories (.git, node_modules, __pycache__, etc.) are "
+            "automatically skipped."
         )
 
     @property
@@ -180,18 +185,25 @@ class GrepTool(_SearchTool):
     @property
     def description(self) -> str:
         return (
-            "A powerful search tool built on ripgrep. "
-            "ALWAYS use this tool for search tasks instead of running "
-            "'grep' or 'rg' in bash. "
-            "Supports full regex syntax (e.g., 'log.*Error', 'function\\s+\\w+'). "
-            "Pattern syntax follows ripgrep: literal braces need escaping "
-            "(use 'interface\\{\\}' to find 'interface{}'). "
-            "Output modes: 'content' shows matching lines with context; "
+            "A powerful search tool built on ripgrep.\n"
+            "\n"
+            "Usage:\n"
+            " - ALWAYS use this tool for search tasks. NEVER invoke `grep` or `rg` "
+            "as a Bash command. The grep tool has been optimized for correct "
+            "permissions and access.\n"
+            " - Supports full regex syntax (e.g., 'log.*Error', 'function\\s+\\w+')\n"
+            " - Filter files with glob parameter (e.g. '*.js', '**/*.tsx') or type "
+            "parameter (e.g. 'js', 'py', 'rust', 'go', 'java')\n"
+            " - Output modes: 'content' shows matching lines with context; "
             "'files_with_matches' shows only file paths (default); "
-            "'count' shows per-file match counts. "
-            "Skips binary and files >2 MB. Supports glob/type filtering. "
+            "'count' shows per-file match counts.\n"
+            "\n"
+            "Pattern syntax: uses ripgrep — literal braces need escaping "
+            "(use 'interface\\{\\}' to find 'interface{}' in Go code). "
             "Multiline matching: by default patterns match within single lines only. "
-            "For cross-line patterns, use multiline=true."
+            "For cross-line patterns like 'struct \\{[\\s\\S]*?field', use multiline=true.\n"
+            "\n"
+            "Skips binary files and files >2 MB."
         )
 
     @property
