@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from pathlib import Path
 
 import pytest
@@ -26,11 +25,8 @@ def _write_skill(
     return path
 
 
-def _run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
-
-
-def test_load_skill_returns_path_and_body(tmp_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_load_skill_returns_path_and_body(tmp_path: Path) -> None:
     workspace = tmp_path / "ws"
     ws_skills = workspace / "skills"
     ws_skills.mkdir(parents=True)
@@ -40,14 +36,15 @@ def test_load_skill_returns_path_and_body(tmp_path: Path) -> None:
 
     loader = SkillsLoader(workspace, builtin_skills_dir=builtin)
     tool = LoadSkillTool(skills_loader=loader)
-    result = _run(tool.execute(skill_name="alpha"))
+    result = await tool.execute(skill_name="alpha")
     assert f"File: {skill_path}" in result
     assert "# Alpha content" in result
     # Frontmatter should NOT appear
     assert "---" not in result
 
 
-def test_load_skill_not_found(tmp_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_load_skill_not_found(tmp_path: Path) -> None:
     workspace = tmp_path / "ws"
     workspace.mkdir()
     builtin = tmp_path / "builtin"
@@ -55,12 +52,13 @@ def test_load_skill_not_found(tmp_path: Path) -> None:
 
     loader = SkillsLoader(workspace, builtin_skills_dir=builtin)
     tool = LoadSkillTool(skills_loader=loader)
-    result = _run(tool.execute(skill_name="missing"))
+    result = await tool.execute(skill_name="missing")
     assert "Error" in result
     assert "not found" in result.lower()
 
 
-def test_load_skill_not_found_lists_available(tmp_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_load_skill_not_found_lists_available(tmp_path: Path) -> None:
     workspace = tmp_path / "ws"
     ws_skills = workspace / "skills"
     ws_skills.mkdir(parents=True)
@@ -71,7 +69,7 @@ def test_load_skill_not_found_lists_available(tmp_path: Path) -> None:
 
     loader = SkillsLoader(workspace, builtin_skills_dir=builtin)
     tool = LoadSkillTool(skills_loader=loader)
-    result = _run(tool.execute(skill_name="missing"))
+    result = await tool.execute(skill_name="missing")
     assert "alpha" in result
     assert "beta" in result
 

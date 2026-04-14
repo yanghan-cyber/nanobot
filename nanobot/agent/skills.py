@@ -6,6 +6,8 @@ import re
 import shutil
 from pathlib import Path
 
+import yaml
+
 # Default builtin skills directory (relative to this file)
 BUILTIN_SKILLS_DIR = Path(__file__).parent.parent / "skills"
 
@@ -67,7 +69,10 @@ class SkillsLoader:
             skills = [s for s in skills if s["name"] not in self.disabled_skills]
 
         if filter_unavailable:
-            return [skill for skill in skills if self._check_requirements(self._get_skill_meta(skill["name"]))]
+            return [
+                skill for skill in skills
+                if self._check_requirements(self._get_nanobot_meta(skill["name"]))
+            ]
         return skills
 
     def load_skill(self, name: str) -> str | None:
@@ -80,14 +85,8 @@ class SkillsLoader:
         Returns:
             Skill content or None if not found.
         """
-        roots = [self.workspace_skills]
-        if self.builtin_skills:
-            roots.append(self.builtin_skills)
-        for root in roots:
-            path = root / name / "SKILL.md"
-            if path.exists():
-                return path.read_text(encoding="utf-8")
-        return None
+        path = self.get_skill_path(name)
+        return path.read_text(encoding="utf-8") if path else None
 
     def get_skill_path(self, name: str) -> Path | None:
         """Resolve the SKILL.md path for a skill by name.
@@ -115,7 +114,7 @@ class SkillsLoader:
             Formatted skills content.
         """
         parts = [
-            f"### Skill: {name}\n\n{self._strip_frontmatter(markdown)}"
+            f"### Skill: {name}\n\n{self.strip_frontmatter(markdown)}"
             for name in skill_names
             if (markdown := self.load_skill(name))
         ]
@@ -135,9 +134,10 @@ class SkillsLoader:
         lines: list[str] = []
         for entry in all_skills:
             skill_name = entry["name"]
-            meta = self._get_skill_meta(skill_name)
+            raw_meta = self.get_skill_metadata(skill_name) or {}
+            meta = self._get_nanobot_meta(skill_name)
             available = self._check_requirements(meta)
-            description = self._get_skill_description(skill_name)
+            description = raw_meta.get("description") or skill_name
 
             if available:
                 lines.append(f"- {skill_name}: {description}")
@@ -156,14 +156,7 @@ class SkillsLoader:
             + [f"needs ENV '{env_name}'" for env_name in required_env_vars if not os.environ.get(env_name)]
         )
 
-    def _get_skill_description(self, name: str) -> str:
-        """Get the description of a skill from its frontmatter."""
-        meta = self.get_skill_metadata(name)
-        if meta and meta.get("description"):
-            return meta["description"]
-        return name  # Fallback to skill name
-
-    def _strip_frontmatter(self, content: str) -> str:
+    def strip_frontmatter(self, content: str) -> str:
         """Remove YAML frontmatter from markdown content."""
         if not content.startswith("---"):
             return content
@@ -172,16 +165,29 @@ class SkillsLoader:
             return content[match.end():].strip()
         return content
 
-    def _parse_nanobot_metadata(self, raw: str) -> dict:
-        """Parse skill metadata JSON from frontmatter (supports nanobot and openclaw keys)."""
-        try:
-            data = json.loads(raw)
-        except (json.JSONDecodeError, TypeError):
+    def _parse_nanobot_metadata(self, raw: object) -> dict:
+        """Extract nanobot/openclaw metadata from a frontmatter field.
+
+        ``raw`` may be a dict (already parsed by yaml.safe_load) or a JSON str.
+        """
+        if isinstance(raw, dict):
+            data = raw
+        elif isinstance(raw, str):
+            try:
+                data = json.loads(raw)
+            except (json.JSONDecodeError, TypeError):
+                return {}
+        else:
             return {}
         if not isinstance(data, dict):
             return {}
         payload = data.get("nanobot", data.get("openclaw", {}))
         return payload if isinstance(payload, dict) else {}
+
+    def _get_nanobot_meta(self, name: str) -> dict:
+        """Load and return parsed nanobot/openclaw metadata for a skill."""
+        raw_meta = self.get_skill_metadata(name) or {}
+        return self._parse_nanobot_metadata(raw_meta.get("metadata"))
 
     def _check_requirements(self, skill_meta: dict) -> bool:
         """Check if skill requirements are met (bins, env vars)."""
@@ -192,21 +198,13 @@ class SkillsLoader:
             os.environ.get(var) for var in required_env_vars
         )
 
-    def _get_skill_meta(self, name: str) -> dict:
-        """Get nanobot metadata for a skill (cached in frontmatter)."""
-        meta = self.get_skill_metadata(name) or {}
-        return self._parse_nanobot_metadata(meta.get("metadata", ""))
-
     def get_always_skills(self) -> list[str]:
         """Get skills marked as always=true that meet requirements."""
         return [
             entry["name"]
             for entry in self.list_skills(filter_unavailable=True)
-            if (meta := self.get_skill_metadata(entry["name"]) or {})
-            and (
-                self._parse_nanobot_metadata(meta.get("metadata", "")).get("always")
-                or meta.get("always")
-            )
+            if (meta := self._get_nanobot_meta(entry["name"]))
+            and (meta.get("always") or (self.get_skill_metadata(entry["name"]) or {}).get("always"))
         ]
 
     def get_skill_metadata(self, name: str) -> dict | None:
@@ -225,10 +223,15 @@ class SkillsLoader:
         match = _STRIP_SKILL_FRONTMATTER.match(content)
         if not match:
             return None
-        metadata: dict[str, str] = {}
-        for line in match.group(1).splitlines():
-            if ":" not in line:
-                continue
-            key, value = line.split(":", 1)
-            metadata[key.strip()] = value.strip().strip('"\'')
+        try:
+            parsed = yaml.safe_load(match.group(1))
+        except yaml.YAMLError:
+            return None
+        if not isinstance(parsed, dict):
+            return None
+        # yaml.safe_load returns native types (int, bool, list, etc.);
+        # keep values as-is so downstream consumers get correct types.
+        metadata: dict[str, object] = {}
+        for key, value in parsed.items():
+            metadata[str(key)] = value
         return metadata

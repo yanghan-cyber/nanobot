@@ -49,5 +49,5 @@ class LoadSkillTool(Tool):
             return f"Error: Skill '{skill_name}' not found. Available skills: {names}"
 
         content = path.read_text(encoding="utf-8")
-        body = self._loader._strip_frontmatter(content)
+        body = self._loader.strip_frontmatter(content)
         return f"File: {path}\n\n{body}"
