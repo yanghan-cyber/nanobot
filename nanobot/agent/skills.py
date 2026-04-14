@@ -120,12 +120,22 @@ class SkillsLoader:
         ]
         return "\n\n---\n\n".join(parts)
 
+    @staticmethod
+    def _indent_description(text: str) -> str:
+        """Indent continuation lines of a multi-line description by 2 spaces."""
+        parts = text.split("\n")
+        if len(parts) <= 1:
+            return text
+        return parts[0] + "\n" + "\n".join("  " + line for line in parts[1:])
+
     def build_skills_summary(self) -> str:
         """
         Build a compact one-line-per-skill summary.
 
         Available skills: ``- name: description``
         Unavailable skills: ``- name (unavailable: needs CLI 'x'): description``
+        Multi-line descriptions are indented so sub-items don't collide with
+        top-level skill entries.
         """
         all_skills = self.list_skills(filter_unavailable=False)
         if not all_skills:
@@ -135,15 +145,11 @@ class SkillsLoader:
         for entry in all_skills:
             skill_name = entry["name"]
             raw_meta = self.get_skill_metadata(skill_name) or {}
-            meta = self._get_nanobot_meta(skill_name)
+            meta = self._parse_nanobot_metadata(raw_meta.get("metadata"))
             available = self._check_requirements(meta)
             description = raw_meta.get("description") or skill_name
-
-            if available:
-                lines.append(f"- {skill_name}: {description}")
-            else:
-                missing = self._get_missing_requirements(meta)
-                lines.append(f"- {skill_name} (unavailable: {missing}): {description}")
+            suffix = "" if available else f" (unavailable: {self._get_missing_requirements(meta)})"
+            lines.append(f"- {skill_name}{suffix}: {self._indent_description(description)}")
         return "\n".join(lines)
 
     def _get_missing_requirements(self, skill_meta: dict) -> str:
