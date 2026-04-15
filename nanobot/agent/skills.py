@@ -128,7 +128,7 @@ class SkillsLoader:
             return text
         return parts[0] + "\n" + "\n".join("  " + line for line in parts[1:])
 
-    def build_skills_summary(self) -> str:
+    def build_skills_summary(self, exclude: set[str] | None = None) -> str:
         """
         Build a compact one-line-per-skill summary.
 
@@ -136,6 +136,12 @@ class SkillsLoader:
         Unavailable skills: ``- name (unavailable: needs CLI 'x'): description``
         Multi-line descriptions are indented so sub-items don't collide with
         top-level skill entries.
+
+        Args:
+            exclude: Set of skill names to omit from the summary.
+
+        Returns:
+            Markdown-formatted skills summary.
         """
         all_skills = self.list_skills(filter_unavailable=False)
         if not all_skills:
@@ -144,9 +150,11 @@ class SkillsLoader:
         lines: list[str] = []
         for entry in all_skills:
             skill_name = entry["name"]
-            raw_meta = self.get_skill_metadata(skill_name) or {}
-            meta = self._parse_nanobot_metadata(raw_meta.get("metadata"))
+            if exclude and skill_name in exclude:
+                continue
+            meta = self._get_nanobot_meta(skill_name)
             available = self._check_requirements(meta)
+            raw_meta = self.get_skill_metadata(skill_name) or {}
             description = raw_meta.get("description") or skill_name
             suffix = "" if available else f" (unavailable: {self._get_missing_requirements(meta)})"
             lines.append(f"- {skill_name}{suffix}: {self._indent_description(description)}")
@@ -209,8 +217,11 @@ class SkillsLoader:
         return [
             entry["name"]
             for entry in self.list_skills(filter_unavailable=True)
-            if (meta := self._get_nanobot_meta(entry["name"]))
-            and (meta.get("always") or (self.get_skill_metadata(entry["name"]) or {}).get("always"))
+            if (meta := self.get_skill_metadata(entry["name"]) or {})
+            and (
+                self._parse_nanobot_metadata(meta.get("metadata", "")).get("always")
+                or meta.get("always")
+            )
         ]
 
     def get_skill_metadata(self, name: str) -> dict | None:
