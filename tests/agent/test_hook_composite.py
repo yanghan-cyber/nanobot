@@ -365,17 +365,23 @@ async def test_agent_loop_no_hooks_backward_compat(tmp_path):
     from nanobot.providers.base import LLMResponse, ToolCallRequest
 
     loop = _make_loop(tmp_path)
-    loop.provider.chat_with_retry = AsyncMock(return_value=LLMResponse(
-        content="working",
-        tool_calls=[ToolCallRequest(id="c1", name="list_dir", arguments={"path": "."})],
-    ))
+
+    call_count = {"n": 0}
+
+    async def fake_chat(*args, **kwargs):
+        call_count["n"] += 1
+        if kwargs.get("tools") is None:
+            return LLMResponse(content="Summary after hitting max iterations.")
+        return LLMResponse(
+            content="working",
+            tool_calls=[ToolCallRequest(id="c1", name="list_dir", arguments={"path": "."})],
+        )
+
+    loop.provider.chat_with_retry = AsyncMock(side_effect=fake_chat)
     loop.tools.get_definitions = MagicMock(return_value=[])
     loop.tools.execute = AsyncMock(return_value="ok")
     loop.max_iterations = 2
 
     content, tools_used, _, _, _ = await loop._run_agent_loop([])
-    assert content == (
-        "I reached the maximum number of tool call iterations (2) "
-        "without completing the task. You can try breaking the task into smaller steps."
-    )
+    assert content == "Summary after hitting max iterations."
     assert tools_used == ["list_dir", "list_dir"]

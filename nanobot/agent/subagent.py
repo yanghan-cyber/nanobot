@@ -167,7 +167,7 @@ class SubagentManager:
                     hook=_SubagentHook(task_id),
                     max_iterations_message="You have reached the maximum number of iterations. Summarize what you have found so far and provide your best answer based on the research completed.",
                     error_message=None,
-                    fail_on_tool_error=True,
+                    fail_on_tool_error=False,
                 )
             )
             if result.stop_reason == "tool_error":

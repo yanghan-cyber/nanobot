@@ -227,10 +227,21 @@ async def test_runner_returns_max_iterations_fallback():
     from nanobot.agent.runner import AgentRunSpec, AgentRunner
 
     provider = MagicMock()
-    provider.chat_with_retry = AsyncMock(return_value=LLMResponse(
-        content="still working",
-        tool_calls=[ToolCallRequest(id="call_1", name="list_dir", arguments={"path": "."})],
-    ))
+
+    # Iteration calls return tool calls; the final summary call returns text.
+    call_count = {"n": 0}
+
+    async def fake_chat(*args, **kwargs):
+        call_count["n"] += 1
+        # The last call (summary, with tools=None) should return plain text
+        if kwargs.get("tools") is None:
+            return LLMResponse(content="Here is my summary of findings.")
+        return LLMResponse(
+            content="still working",
+            tool_calls=[ToolCallRequest(id="call_1", name="list_dir", arguments={"path": "."})],
+        )
+
+    provider.chat_with_retry = AsyncMock(side_effect=fake_chat)
     tools = MagicMock()
     tools.get_definitions.return_value = []
     tools.execute = AsyncMock(return_value="tool result")
@@ -245,10 +256,7 @@ async def test_runner_returns_max_iterations_fallback():
     ))
 
     assert result.stop_reason == "max_iterations"
-    assert result.final_content == (
-        "I reached the maximum number of tool call iterations (2) "
-        "without completing the task. You can try breaking the task into smaller steps."
-    )
+    assert result.final_content == "Here is my summary of findings."
     assert result.messages[-1]["role"] == "assistant"
     assert result.messages[-1]["content"] == result.final_content
 
@@ -878,20 +886,26 @@ async def test_runner_blocks_repeated_external_fetches():
 @pytest.mark.asyncio
 async def test_loop_max_iterations_message_stays_stable(tmp_path):
     loop = _make_loop(tmp_path)
-    loop.provider.chat_with_retry = AsyncMock(return_value=LLMResponse(
-        content="working",
-        tool_calls=[ToolCallRequest(id="call_1", name="list_dir", arguments={})],
-    ))
+
+    call_count = {"n": 0}
+
+    async def fake_chat(*args, **kwargs):
+        call_count["n"] += 1
+        if kwargs.get("tools") is None:
+            return LLMResponse(content="Here is my summary after hitting the limit.")
+        return LLMResponse(
+            content="working",
+            tool_calls=[ToolCallRequest(id="call_1", name="list_dir", arguments={})],
+        )
+
+    loop.provider.chat_with_retry = AsyncMock(side_effect=fake_chat)
     loop.tools.get_definitions = MagicMock(return_value=[])
     loop.tools.execute = AsyncMock(return_value="ok")
     loop.max_iterations = 2
 
     final_content, _, _, _, _ = await loop._run_agent_loop([])
 
-    assert final_content == (
-        "I reached the maximum number of tool call iterations (2) "
-        "without completing the task. You can try breaking the task into smaller steps."
-    )
+    assert final_content == "Here is my summary after hitting the limit."
 
 
 @pytest.mark.asyncio
@@ -1100,10 +1114,19 @@ async def test_subagent_max_iterations_announces_existing_fallback(tmp_path, mon
     bus = MessageBus()
     provider = MagicMock()
     provider.get_default_model.return_value = "test-model"
-    provider.chat_with_retry = AsyncMock(return_value=LLMResponse(
-        content="working",
-        tool_calls=[ToolCallRequest(id="call_1", name="list_dir", arguments={"path": "."})],
-    ))
+
+    call_count = {"n": 0}
+
+    async def fake_chat(*args, **kwargs):
+        call_count["n"] += 1
+        if kwargs.get("tools") is None:
+            return LLMResponse(content="My research summary after max iterations.")
+        return LLMResponse(
+            content="working",
+            tool_calls=[ToolCallRequest(id="call_1", name="list_dir", arguments={"path": "."})],
+        )
+
+    provider.chat_with_retry = AsyncMock(side_effect=fake_chat)
     mgr = SubagentManager(
         provider=provider,
         workspace=tmp_path,
@@ -1121,7 +1144,7 @@ async def test_subagent_max_iterations_announces_existing_fallback(tmp_path, mon
 
     mgr._announce_result.assert_awaited_once()
     args = mgr._announce_result.await_args.args
-    assert args[2] == "You have reached the maximum number of iterations. Summarize what you have found so far and provide your best answer based on the research completed."
+    assert args[2] == "My research summary after max iterations."
     assert args[4] == "ok"
 
 

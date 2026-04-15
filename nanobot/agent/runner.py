@@ -500,16 +500,28 @@ class AgentRunner:
         else:
             stop_reason = "max_iterations"
             if spec.max_iterations_message:
-                final_content = spec.max_iterations_message.format(
+                prompt_text = spec.max_iterations_message.format(
                     max_iterations=spec.max_iterations,
                 )
             else:
-                final_content = render_template(
+                prompt_text = render_template(
                     "agent/max_iterations_message.md",
                     strip=True,
                     max_iterations=spec.max_iterations,
                 )
-            self._append_final_message(messages, final_content)
+            messages.append({"role": "user", "content": prompt_text})
+            try:
+                summary_kwargs = self._build_request_kwargs(
+                    spec, messages, tools=None,
+                )
+                summary_response = await self.provider.chat_with_retry(**summary_kwargs)
+                raw_usage = self._usage_dict(summary_response.usage)
+                self._accumulate_usage(usage, raw_usage)
+                final_content = summary_response.content or prompt_text
+                messages.append(build_assistant_message(final_content))
+            except Exception:
+                logger.warning("Max-iterations summary call failed; using prompt as fallback")
+                final_content = prompt_text
             # Drain any remaining injections so they are appended to the
             # conversation history instead of being re-published as
             # independent inbound messages by _dispatch's finally block.
