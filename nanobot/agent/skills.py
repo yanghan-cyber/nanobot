@@ -71,7 +71,7 @@ class SkillsLoader:
         if filter_unavailable:
             return [
                 skill for skill in skills
-                if self._check_requirements(self._get_nanobot_meta(skill["name"]))
+                if self._check_requirements(self._get_skill_meta(skill["name"]))
             ]
         return skills
 
@@ -152,7 +152,7 @@ class SkillsLoader:
             skill_name = entry["name"]
             if exclude and skill_name in exclude:
                 continue
-            meta = self._get_nanobot_meta(skill_name)
+            meta = self._get_skill_meta(skill_name)
             available = self._check_requirements(meta)
             raw_meta = self.get_skill_metadata(skill_name) or {}
             description = raw_meta.get("description") or skill_name
@@ -198,7 +198,7 @@ class SkillsLoader:
         payload = data.get("nanobot", data.get("openclaw", {}))
         return payload if isinstance(payload, dict) else {}
 
-    def _get_nanobot_meta(self, name: str) -> dict:
+    def _get_skill_meta(self, name: str) -> dict:
         """Load and return parsed nanobot/openclaw metadata for a skill."""
         raw_meta = self.get_skill_metadata(name) or {}
         return self._parse_nanobot_metadata(raw_meta.get("metadata"))
@@ -212,6 +212,7 @@ class SkillsLoader:
             os.environ.get(var) for var in required_env_vars
         )
 
+
     def get_always_skills(self) -> list[str]:
         """Get skills marked as always=true that meet requirements."""
         return [
@@ -219,7 +220,7 @@ class SkillsLoader:
             for entry in self.list_skills(filter_unavailable=True)
             if (meta := self.get_skill_metadata(entry["name"]) or {})
             and (
-                self._parse_nanobot_metadata(meta.get("metadata", "")).get("always")
+                self._parse_nanobot_metadata(meta.get("metadata")).get("always")
                 or meta.get("always")
             )
         ]

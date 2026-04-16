@@ -26,6 +26,7 @@ from nanobot.agent.tools.message import MessageTool
 from nanobot.agent.tools.notebook import NotebookEditTool
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.tools.search import GlobTool, GrepTool
+from nanobot.agent.tools.self import MyTool
 from nanobot.agent.tools.shell import BashTool, ShellBgTool
 from nanobot.agent.tools.skill import LoadSkillTool
 from nanobot.agent.tools.spawn import SpawnTool
@@ -42,7 +43,7 @@ from nanobot.utils.helpers import truncate_text as truncate_text_fn
 from nanobot.utils.runtime import EMPTY_FINAL_RESPONSE_MESSAGE
 
 if TYPE_CHECKING:
-    from nanobot.config.schema import BashToolConfig, ChannelsConfig, WebToolsConfig
+    from nanobot.config.schema import BashToolConfig, ChannelsConfig, MyToolConfig, ToolsConfig, WebToolsConfig
     from nanobot.cron.service import CronService
 
 
@@ -90,6 +91,9 @@ class _LoopHook(AgentHook):
         if self._on_stream_end:
             await self._on_stream_end(resuming=resuming)
         self._stream_buf = ""
+
+    async def before_iteration(self, context: AgentHookContext) -> None:
+        self._loop._current_iteration = context.iteration
 
     async def before_execute_tools(self, context: AgentHookContext) -> None:
         if self._on_progress:
@@ -157,9 +161,11 @@ class AgentLoop:
         hooks: list[AgentHook] | None = None,
         unified_session: bool = False,
         disabled_skills: list[str] | None = None,
+        tools_config: ToolsConfig | None = None,
     ):
-        from nanobot.config.schema import BashToolConfig, WebToolsConfig
+        from nanobot.config.schema import BashToolConfig, MyToolConfig, ToolsConfig, WebToolsConfig
 
+        _tc = tools_config or ToolsConfig()
         defaults = AgentDefaults()
         self.bus = bus
         self.channels_config = channels_config
@@ -227,7 +233,7 @@ class AgentLoop:
             provider=provider,
             model=self.model,
             sessions=self.sessions,
-            context_window_tokens=context_window_tokens,
+            context_window_tokens=self.context_window_tokens,
             build_messages=self.context.build_messages,
             get_tool_definitions=self.tools.get_definitions,
             max_completion_tokens=provider.generation.max_tokens,
@@ -243,6 +249,10 @@ class AgentLoop:
             model=self.model,
         )
         self._register_default_tools()
+        if _tc.my.enable:
+            self.tools.register(MyTool(loop=self, modify_allowed=_tc.my.allow_set))
+        self._runtime_vars: dict[str, Any] = {}
+        self._current_iteration: int = 0
         self.commands = CommandRouter()
         register_builtin_commands(self.commands)
 
@@ -314,7 +324,7 @@ class AgentLoop:
 
     def _set_tool_context(self, channel: str, chat_id: str, message_id: str | None = None) -> None:
         """Update context for all tools that need routing info."""
-        for name in ("message", "spawn", "cron"):
+        for name in ("message", "spawn", "cron", "my"):
             if tool := self.tools.get(name):
                 if hasattr(tool, "set_context"):
                     tool.set_context(channel, chat_id, *([message_id] if name == "message" else []))
@@ -430,6 +440,11 @@ class AgentLoop:
         self._last_usage = result.usage
         if result.stop_reason == "max_iterations":
             logger.warning("Max iterations ({}) reached", self.max_iterations)
+            # Push final content through stream so streaming channels (e.g. Feishu)
+            # update the card instead of leaving it empty.
+            if on_stream and on_stream_end:
+                await on_stream(result.final_content or "")
+                await on_stream_end(resuming=False)
         elif result.stop_reason == "error":
             logger.error("LLM returned error: {}", (result.final_content or "")[:200])
         return result.final_content, result.tools_used, result.messages, result.stop_reason, result.had_injections
@@ -442,7 +457,7 @@ class AgentLoop:
 
         while self._running:
             try:
-                    msg = await asyncio.wait_for(self.bus.consume_inbound(), timeout=1.0)
+                msg = await asyncio.wait_for(self.bus.consume_inbound(), timeout=1.0)
             except asyncio.TimeoutError:
                 self.auto_compact.check_expired(
                     self._schedule_background,

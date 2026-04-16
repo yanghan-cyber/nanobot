@@ -312,6 +312,7 @@ def test_disabled_skills_excluded_from_get_always_skills(tmp_path: Path) -> None
     assert "beta" in always
 
 
+
 def test_get_skill_path_returns_path_for_workspace_skill(tmp_path: Path) -> None:
     workspace = tmp_path / "ws"
     ws_skills = workspace / "skills"
@@ -419,6 +420,7 @@ def test_build_skills_summary_no_description_uses_name(tmp_path: Path) -> None:
     loader = SkillsLoader(workspace, builtin_skills_dir=builtin)
     summary = loader.build_skills_summary()
     assert "- plain: plain" in summary
+
 
 
 # -- multiline description tests (YAML folded > and literal |) -----------------
