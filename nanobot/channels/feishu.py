@@ -1717,5 +1717,6 @@ class FeishuChannel(BaseChannel):
         """Format a tool hint string with the 🔧 prefix for each line."""
         lines = self.__class__._format_tool_hint_lines(tool_hint).split("\n")
         return "\n".join(
-            f"{self.config.tool_hint_prefix} {ln}" for ln in lines if ln.strip()
+            f"{self.config.tool_hint_prefix} {ln}" if not ln.startswith("   ") else ln
+            for ln in lines if ln.strip()
         )

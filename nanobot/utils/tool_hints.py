@@ -49,7 +49,7 @@ def format_tool_hints(tool_calls: list) -> str:
         else:
             hints.append((hint, 1))
 
-    return ", ".join(
+    return "\n".join(
         f"{h} \u00d7 {c}" if c > 1 else h for h, c in hints
     )
 
@@ -89,7 +89,14 @@ def _fmt_known(tc, fmt: tuple) -> str:
         val = abbreviate_path(val)
     elif fmt[3]:  # is_command
         val = _abbreviate_command(val)
-    return fmt[1].format(val)
+    result = fmt[1].format(val)
+    # For bash, prepend purpose description if available.
+    if tc.name == "bash":
+        args = _get_args(tc)
+        purpose = args.get("purpose", "") if isinstance(args, dict) else ""
+        if purpose:
+            result = f"{purpose}\n   {result}"
+    return result
 
 
 def _abbreviate_command(cmd: str, max_len: int = 40) -> str:

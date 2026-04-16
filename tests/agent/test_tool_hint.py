@@ -46,6 +46,16 @@ class TestToolHintKnownTools:
         result = _hint([_tc("bash", {"command": "npm install typescript"})])
         assert result == "$ npm install typescript"
 
+    def test_bash_with_purpose_shows_purpose_first(self):
+        result = _hint([_tc("bash", {"purpose": "Install dependencies", "command": "npm install typescript"})])
+        assert result == "Install dependencies\n   $ npm install typescript"
+
+    def test_bash_with_purpose_and_long_command(self):
+        cmd = "cd /very/long/path && cat file && echo done && sleep 1 && ls -la"
+        result = _hint([_tc("bash", {"purpose": "Check build output", "command": cmd})])
+        assert result.startswith("Check build output\n   $ ")
+        assert "…" in result.split("\n")[1]
+
     def test_bash_truncates_long_command(self):
         cmd = "cd /very/long/path && cat file && echo done && sleep 1 && ls -la"
         result = _hint([_tc("bash", {"command": cmd})])
@@ -196,7 +206,7 @@ class TestToolHintFolding:
 
 
 class TestToolHintMultipleCalls:
-    """Test multiple different tool calls are comma-separated."""
+    """Test multiple different tool calls are newline-separated."""
 
     def test_two_different_tools(self):
         calls = [
@@ -206,7 +216,7 @@ class TestToolHintMultipleCalls:
         result = _hint(calls)
         assert 'grep "TODO"' in result
         assert "read main.py" in result
-        assert ", " in result
+        assert "\n" in result
 
 
 class TestToolHintEdgeCases:
@@ -252,5 +262,5 @@ class TestToolHintMixedFolding:
         ]
         result = _hint(calls)
         assert "\u00d7" not in result
-        parts = result.split(", ")
+        parts = result.split("\n")
         assert len(parts) == 5
