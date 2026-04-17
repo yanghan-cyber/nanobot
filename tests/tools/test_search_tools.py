@@ -106,7 +106,50 @@ async def test_grep_fixed_strings(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_grep_count_mode(tmp_path: Path) -> None:
+async def test_grep_files_with_matches_mode_returns_unique_paths(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    a = tmp_path / "src" / "a.py"
+    b = tmp_path / "src" / "b.py"
+    a.write_text("needle\nneedle\n", encoding="utf-8")
+    b.write_text("needle\n", encoding="utf-8")
+    os.utime(a, (1, 1))
+    os.utime(b, (2, 2))
+
+    tool = GrepTool(workspace=tmp_path, allowed_dir=tmp_path)
+    result = await tool.execute(
+        pattern="needle",
+        path="src",
+        output_mode="files_with_matches",
+    )
+
+    assert result.splitlines() == ["src/b.py", "src/a.py"]
+
+
+@pytest.mark.asyncio
+async def test_grep_files_with_matches_supports_head_limit_and_offset(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    for name in ("a.py", "b.py", "c.py"):
+        (tmp_path / "src" / name).write_text("needle\n", encoding="utf-8")
+
+    tool = GrepTool(workspace=tmp_path, allowed_dir=tmp_path)
+    result = await tool.execute(
+        pattern="needle",
+        path="src",
+        head_limit=1,
+        offset=1,
+    )
+
+    # Filesystem order is not deterministic across platforms, so just verify:
+    # 1. Only one file path is returned (head_limit=1 after offset=1)
+    # 2. The pagination info is correct
+    assert "pagination: limit=1, offset=1" in result
+    # Count non-empty lines that start with src/ (file paths)
+    file_lines = [l for l in result.splitlines() if l.startswith("src/")]
+    assert len(file_lines) == 1
+
+
+@pytest.mark.asyncio
+async def test_grep_count_mode_reports_counts_per_file(tmp_path: Path) -> None:
     (tmp_path / "logs").mkdir()
     (tmp_path / "logs" / "one.log").write_text("warn\nok\nwarn\n", encoding="utf-8")
     (tmp_path / "logs" / "two.log").write_text("warn\n", encoding="utf-8")
