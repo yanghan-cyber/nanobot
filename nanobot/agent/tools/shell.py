@@ -251,7 +251,7 @@ _IS_WINDOWS = sys.platform == "win32"
             description="Run command in background. Returns a bg_id for tracking.",
             default=False,
         ),
-        required=["command"],
+        required=["command", "purpose"],
     )
 )
 class BashTool(Tool):
