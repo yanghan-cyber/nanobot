@@ -42,6 +42,22 @@ class SubagentStatus:
     error: str | None = None
 
 
+@dataclass(slots=True)
+class SubagentStatus:
+    """Real-time status of a running subagent."""
+
+    task_id: str
+    label: str
+    task_description: str
+    started_at: float          # time.monotonic()
+    phase: str = "initializing"  # initializing | awaiting_tools | tools_completed | final_response | done | error
+    iteration: int = 0
+    tool_events: list = field(default_factory=list)   # [{name, status, detail}, ...]
+    usage: dict = field(default_factory=dict)          # token usage
+    stop_reason: str | None = None
+    error: str | None = None
+
+
 class _SubagentHook(AgentHook):
     """Hook for subagent execution — logs tool calls and updates status."""
 
@@ -226,8 +242,7 @@ class SubagentManager:
                     origin,
                     "error",
                 )
-                return
-            if result.stop_reason == "error":
+            elif result.stop_reason == "error":
                 await self._announce_result(
                     task_id,
                     label,
@@ -235,13 +250,13 @@ class SubagentManager:
                     origin,
                     "error",
                 )
-                return
-            final_result = (
-                result.final_content or "Task completed but no final response was generated."
-            )
+            else:
+                final_result = (
+                    result.final_content or "Task completed but no final response was generated."
+                )
 
-            logger.info("Subagent [{}] completed successfully", task_id)
-            await self._announce_result(task_id, label, final_result, origin, "ok")
+                logger.info("Subagent [{}] completed successfully", task_id)
+                await self._announce_result(task_id, label, final_result, origin, "ok")
 
         except Exception as e:
             status.phase = "error"

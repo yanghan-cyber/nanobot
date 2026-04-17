@@ -422,7 +422,6 @@ def test_build_skills_summary_no_description_uses_name(tmp_path: Path) -> None:
     assert "- plain: plain" in summary
 
 
-
 # -- multiline description tests (YAML folded > and literal |) -----------------
 
 

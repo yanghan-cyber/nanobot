@@ -212,7 +212,6 @@ class SkillsLoader:
             os.environ.get(var) for var in required_env_vars
         )
 
-
     def get_always_skills(self) -> list[str]:
         """Get skills marked as always=true that meet requirements."""
         return [
