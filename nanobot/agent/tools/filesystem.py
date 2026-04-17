@@ -2,16 +2,21 @@
 
 import difflib
 import mimetypes
-import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from nanobot.agent.tools.base import Tool, tool_parameters
-from nanobot.agent.tools.schema import BooleanSchema, IntegerSchema, StringSchema, tool_parameters_schema
 from nanobot.agent.tools import file_state
-from nanobot.utils.helpers import build_image_content_blocks, detect_image_mime
+from nanobot.agent.tools.base import Tool, tool_parameters
+from nanobot.agent.tools.schema import (
+    BooleanSchema,
+    IntegerSchema,
+    StringSchema,
+    tool_parameters_schema,
+)
 from nanobot.config.paths import get_media_dir
+from nanobot.utils.helpers import build_image_content_blocks, detect_image_mime
 
 
 def _resolve_path(
@@ -27,7 +32,7 @@ def _resolve_path(
     resolved = p.resolve()
     if allowed_dir:
         media_path = get_media_dir().resolve()
-        all_dirs = [allowed_dir] + [media_path] + (extra_allowed_dirs or []) 
+        all_dirs = [allowed_dir] + [media_path] + (extra_allowed_dirs or [])
         if not any(_is_under(resolved, d) for d in all_dirs):
             raise PermissionError(f"Path {path} is outside allowed directory {allowed_dir}")
     return resolved
@@ -71,25 +76,23 @@ _BLOCKED_DEVICE_PATHS = frozenset({
 })
 
 
+_PROC_FD_RE = re.compile(r"^/proc/(?:\d+|self)/fd/[012]$")
+
+
 def _is_blocked_device(path: str | Path) -> bool:
     """Check if path is a blocked device that could hang or produce infinite output."""
-    import re
     raw = str(path)
-
-    # Resolve symlinks to check the actual target
     try:
         resolved = str(Path(raw).resolve())
     except (OSError, ValueError):
         resolved = raw
 
-    if raw in _BLOCKED_DEVICE_PATHS or resolved in _BLOCKED_DEVICE_PATHS:
-        return True
-    if re.match(r"/proc/\d+/fd/[012]$", raw) or re.match(r"/proc/self/fd/[012]$", raw):
-        return True
-    if re.match(r"/proc/\d+/fd/[012]$", resolved) or re.match(r"/proc/self/fd/[012]$", resolved):
-        return True
+    for candidate in (raw, resolved):
+        if candidate in _BLOCKED_DEVICE_PATHS:
+            return True
+        if _PROC_FD_RE.match(candidate):
+            return True
 
-    # Check if resolved path starts with /dev/ (covers symlinks to devices)
     if resolved.startswith("/dev/"):
         return True
     return False
@@ -171,10 +174,6 @@ class ReadFileTool(_FsTool):
             if not path:
                 return "Error reading file: Unknown path"
 
-            # Device path blacklist
-            if _is_blocked_device(path):
-                return f"Error: Reading {path} is blocked (device path that could hang or produce infinite output)."
-
             fp = self._resolve(path)
             if _is_blocked_device(fp):
                 return f"Error: Reading {fp} is blocked (device path that could hang or produce infinite output)."
@@ -195,51 +194,20 @@ class ReadFileTool(_FsTool):
             if mime and mime.startswith("image/"):
                 return build_image_content_blocks(raw, mime, str(fp), f"(Image file: {path})")
 
-            # Read dedup: same path + offset + limit + unchanged mtime → stub
-            # Always check for external modifications before dedup
-            entry = file_state._state.get(str(fp.resolve()))
-            try:
-                current_mtime = os.path.getmtime(fp)
-            except OSError:
-                current_mtime = 0.0
-            if entry and entry.can_dedup and entry.offset == offset and entry.limit == limit:
-                if current_mtime != entry.mtime:
-                    # File was modified externally - force full read and mark as not dedupable
-                    entry.can_dedup = False
-                    file_state.record_read(fp, offset=offset, limit=limit)  # Update state with new mtime
-                    # Continue to read full content (don't return dedup message)
-                else:
-                    # File unchanged - return dedup message
-                    # But only if content is actually unchanged (not just mtime)
-                    current_hash = file_state._hash_file(str(fp))
-                    if current_hash == entry.content_hash:
-                        return f"[File unchanged since last read: {path}]"
-                    else:
-                        # Content changed despite same mtime - force full read
-                        entry.can_dedup = False
-                        file_state.record_read(fp, offset=offset, limit=limit)
-            else:
-                # No previous state or marked as not dedupable - read full content
-                file_state.record_read(fp, offset=offset, limit=limit)
-                # Force full read by setting can_dedup to False for this read
-                if entry:
-                    entry.can_dedup = False
+            if file_state.is_unchanged(fp, offset=offset, limit=limit):
+                return f"[File unchanged since last read: {path}]"
 
-            # Read the file content after dedup check
-            raw = fp.read_bytes()
             try:
                 text_content = raw.decode("utf-8")
             except UnicodeDecodeError:
-                # Binary file - return error message
                 mime = detect_image_mime(raw) or mimetypes.guess_type(path)[0]
                 if mime and mime.startswith("image/"):
                     return build_image_content_blocks(raw, mime, str(fp), f"(Image file: {path})")
                 return f"Error: Cannot read binary file {path} (MIME: {mime or 'unknown'}). Only UTF-8 text and images are supported."
 
-            # Normalize CRLF -> LF before line-splitting. Primarily a Windows
-            # concern (git checkouts with autocrlf, editors saving CRLF) but
-            # applied on all platforms so downstream StrReplace/Grep behavior
-            # is consistent regardless of where the file was written.
+            # Normalize CRLF -> LF. Primarily a Windows concern (git autocrlf,
+            # editors saving CRLF) but applied everywhere so StrReplace/Grep
+            # behavior is consistent regardless of where the file was written.
             text_content = text_content.replace("\r\n", "\n")
 
             all_lines = text_content.splitlines()
