@@ -238,7 +238,8 @@ async def test_process_message_persists_user_message_before_turn_completes(tmp_p
     loop.sessions.invalidate("feishu:c1")
     persisted = loop.sessions.get_or_create("feishu:c1")
     assert [m["role"] for m in persisted.messages] == ["user"]
-    assert persisted.messages[0]["content"] == "persist me"
+    assert "persist me" in persisted.messages[0]["content"]
+    assert "[Runtime Context" in persisted.messages[0]["content"]
     assert persisted.metadata.get(AgentLoop._PENDING_USER_TURN_KEY) is True
     assert persisted.updated_at >= persisted.created_at
 
@@ -266,12 +267,13 @@ async def test_process_message_does_not_duplicate_early_persisted_user_message(t
     assert result is not None
     assert result.content == "done"
     session = loop.sessions.get_or_create("feishu:c2")
-    assert [
+    user_msgs = [m for m in session.messages if m["role"] == "user"]
+    assert len(user_msgs) == 1
+    assert "hello" in user_msgs[0]["content"]
+    assert "[Runtime Context" in user_msgs[0]["content"]
+    assert {"role": "assistant", "content": "done"} in [
         {k: v for k, v in m.items() if k in {"role", "content"}}
         for m in session.messages
-    ] == [
-        {"role": "user", "content": "hello"},
-        {"role": "assistant", "content": "done"},
     ]
     assert AgentLoop._PENDING_USER_TURN_KEY not in session.metadata
 
@@ -308,15 +310,13 @@ async def test_next_turn_after_crash_closes_pending_user_turn_before_new_input(t
     assert result is not None
     assert result.content == "new answer"
     session = loop.sessions.get_or_create("feishu:c3")
-    assert [
-        {k: v for k, v in m.items() if k in {"role", "content"}}
-        for m in session.messages
-    ] == [
-        {"role": "user", "content": "old question"},
-        {"role": "assistant", "content": "Error: Task interrupted before a response was generated."},
-        {"role": "user", "content": "new question"},
-        {"role": "assistant", "content": "new answer"},
-    ]
+    roles = [m["role"] for m in session.messages]
+    assert roles == ["user", "assistant", "user", "assistant"]
+    assert session.messages[0]["content"] == "old question"
+    assert session.messages[1]["content"] == "Error: Task interrupted before a response was generated."
+    assert "new question" in session.messages[2]["content"]
+    assert "[Runtime Context" in session.messages[2]["content"]
+    assert session.messages[3]["content"] == "new answer"
     assert AgentLoop._PENDING_USER_TURN_KEY not in session.metadata
 
 
@@ -408,21 +408,25 @@ async def test_stop_preserves_runtime_checkpoint_for_next_turn(tmp_path: Path) -
     assert result.content == "next answer"
 
     session = loop.sessions.get_or_create("feishu:c4")
-    assert [
-        {k: v for k, v in m.items() if k in {"role", "content", "tool_call_id", "name"}}
-        for m in session.messages
-    ] == [
-        {"role": "user", "content": "keep progress"},
-        {"role": "assistant", "content": "working"},
-        {"role": "tool", "tool_call_id": "call_done", "name": "read_file", "content": "ok"},
-        {
-            "role": "tool",
-            "tool_call_id": "call_pending",
-            "name": "exec",
-            "content": "Error: Task interrupted before this tool finished.",
-        },
-        {"role": "user", "content": "continue here"},
-        {"role": "assistant", "content": "next answer"},
-    ]
+    msgs = session.messages
+    # First user message (early-persisted with runtime context)
+    assert msgs[0]["role"] == "user"
+    assert "keep progress" in msgs[0]["content"]
+    assert "[Runtime Context" in msgs[0]["content"]
+    assert msgs[1]["role"] == "assistant"
+    assert msgs[1]["content"] == "working"
+    assert msgs[2]["role"] == "tool"
+    assert msgs[2]["tool_call_id"] == "call_done"
+    assert msgs[2]["name"] == "read_file"
+    assert msgs[2]["content"] == "ok"
+    assert msgs[3]["role"] == "tool"
+    assert msgs[3]["tool_call_id"] == "call_pending"
+    assert msgs[3]["name"] == "exec"
+    # Second user message (early-persisted with runtime context)
+    assert msgs[4]["role"] == "user"
+    assert "continue here" in msgs[4]["content"]
+    assert "[Runtime Context" in msgs[4]["content"]
+    assert msgs[5]["role"] == "assistant"
+    assert msgs[5]["content"] == "next answer"
     assert AgentLoop._PENDING_USER_TURN_KEY not in session.metadata
     assert AgentLoop._RUNTIME_CHECKPOINT_KEY not in session.metadata

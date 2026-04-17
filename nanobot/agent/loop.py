@@ -739,7 +739,11 @@ class AgentLoop:
         # makes recovery possible from the session log alone.
         user_persisted_early = False
         if isinstance(msg.content, str) and msg.content.strip():
-            session.add_message("user", msg.content)
+            runtime_ctx = self.context._build_runtime_context(
+                msg.channel, msg.chat_id, self.context.timezone,
+                session_summary=pending,
+            )
+            session.add_message("user", f"{runtime_ctx}\n\n{msg.content}")
             self._mark_pending_user_turn(session)
             self.sessions.save(session)
             user_persisted_early = True

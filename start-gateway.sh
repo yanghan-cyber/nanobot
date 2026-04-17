@@ -3,9 +3,11 @@ set -euo pipefail
 
 UV="/home/yanghan/.local/bin/uv"
 WORKDIR="/home/yanghan/workspace/nanobot"
-LOG_FILE="/home/yanghan/workspace/nanobot/gateway.log"
-PID_FILE="/home/yanghan/workspace/nanobot/gateway.pid"
+LOG_DIR="/home/yanghan/workspace/nanobot/logs"
+LOG_FILE="$LOG_DIR/gateway.log"
+PID_FILE="$LOG_DIR/gateway.pid"
 NOTICE_FILE="/home/yanghan/workspace/nanobot/.restart-notice"
+MAX_LOG_FILES=3
 
 # Proxy settings (enabled by default)
 PROXY_HOST="${PROXY_HOST:-192.168.31.3}"
@@ -22,6 +24,16 @@ case "${1:-}" in
       echo "gateway already running (PID $(cat "$PID_FILE"))"
       exit 1
     fi
+
+    mkdir -p "$LOG_DIR"
+
+    # Rotate logs: keep only MAX_LOG_FILES generations
+    # gateway.log.(MAX-1) → delete, gateway.log.(N) → gateway.log.(N+1)
+    rm -f "$LOG_FILE.$((MAX_LOG_FILES - 1))"
+    for ((i = MAX_LOG_FILES - 2; i >= 1; i--)); do
+      [ -f "$LOG_FILE.$i" ] && mv "$LOG_FILE.$i" "$LOG_FILE.$((i + 1))"
+    done
+    [ -f "$LOG_FILE" ] && mv "$LOG_FILE" "$LOG_FILE.1"
 
     # Restore restart notice from file → env vars, so nanobot sends "Restart completed"
     if [ -f "$NOTICE_FILE" ]; then

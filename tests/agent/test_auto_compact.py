@@ -521,8 +521,8 @@ class TestAutoCompactIntegration:
         await loop.close_mcp()
 
     @pytest.mark.asyncio
-    async def test_runtime_context_markers_not_persisted_for_multi_paragraph_turn(self, tmp_path):
-        """Auto-compact resume context must not leak runtime markers into persisted session history."""
+    async def test_runtime_context_markers_persisted_in_session_history(self, tmp_path):
+        """Runtime context is intentionally persisted so the agent retains per-turn metadata."""
         loop = _make_loop(tmp_path, session_ttl_minutes=15)
         session = loop.sessions.get_or_create("cli:test")
         session.add_message("user", "old message")
@@ -545,10 +545,10 @@ class TestAutoCompactIntegration:
 
         session_after = loop.sessions.get_or_create("cli:test")
         assert any(m.get("content") == "old message" for m in session_after.messages)
-        for persisted in session_after.messages:
-            content = str(persisted.get("content", ""))
-            assert "[Runtime Context" not in content
-            assert "[/Runtime Context]" not in content
+        # Runtime context is intentionally persisted in session history so the
+        # agent retains per-turn channel/time metadata across turns.
+        user_msgs = [m for m in session_after.messages if m.get("role") == "user"]
+        assert any("[Runtime Context" in str(m.get("content", "")) for m in user_msgs)
         await loop.close_mcp()
 
 
