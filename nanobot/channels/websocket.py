@@ -138,24 +138,30 @@ def _query_first(query: dict[str, list[str]], key: str) -> str | None:
     return values[0] if values else None
 
 
-def _parse_inbound_payload(raw: str) -> str | None:
-    """Parse a client frame into text; return None for empty or unrecognized content."""
+def _try_parse_json_object(raw: str) -> dict[str, Any] | None:
+    """Parse raw text as a JSON object; return None for non-JSON, arrays, or empty."""
+    text = raw.strip()
+    if not text.startswith("{"):
+        return None
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _extract_legacy_text(raw: str, data: dict[str, Any] | None = None) -> str | None:
+    """Extract text from a legacy frame.  *data* is the pre-parsed dict when available."""
     text = raw.strip()
     if not text:
         return None
-    if text.startswith("{"):
-        try:
-            data = json.loads(text)
-        except json.JSONDecodeError:
-            return text
-        if isinstance(data, dict):
-            for key in ("content", "text", "message"):
-                value = data.get(key)
-                if isinstance(value, str) and value.strip():
-                    return value
-            return None
-        return None
-    return text
+    if data is None:
+        return text
+    for key in ("content", "text", "message"):
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    return None
 
 
 # Accept UUIDs and short scoped keys like "unified:default". Keeps the capability
@@ -172,21 +178,21 @@ def _parse_envelope(raw: str) -> dict[str, Any] | None:
 
     A frame qualifies when it parses as a JSON object with a string ``type`` field.
     Legacy frames (plain text, or ``{"content": ...}`` without ``type``) return None;
-    callers should fall back to :func:`_parse_inbound_payload` for those.
+    callers should fall back to :func:`_extract_legacy_text` for those.
     """
-    text = raw.strip()
-    if not text.startswith("{"):
-        return None
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(data, dict):
+    data = _try_parse_json_object(raw)
+    if data is None:
         return None
     t = data.get("type")
     if not isinstance(t, str):
         return None
     return data
+
+
+def _parse_inbound_payload(raw: str) -> str | None:
+    """Backward-compatible legacy frame parser (used by tests)."""
+    data = _try_parse_json_object(raw)
+    return _extract_legacy_text(raw, data=data)
 
 
 def _issue_route_secret_matches(headers: Any, configured_secret: str) -> bool:
@@ -248,12 +254,7 @@ class WebSocketChannel(BaseChannel):
         payload: dict[str, Any] = {"event": event}
         payload.update(fields)
         raw = json.dumps(payload, ensure_ascii=False)
-        try:
-            await connection.send(raw)
-        except ConnectionClosed:
-            self._cleanup_connection(connection)
-        except Exception as e:
-            logger.warning("websocket: failed to send {} event: {}", event, e)
+        await self._safe_send_to(connection, raw, label=f" {event} ")
 
     @classmethod
     def default_config(cls) -> dict[str, Any]:
@@ -425,16 +426,7 @@ class WebSocketChannel(BaseChannel):
         default_chat_id = str(uuid.uuid4())
 
         try:
-            await connection.send(
-                json.dumps(
-                    {
-                        "event": "ready",
-                        "chat_id": default_chat_id,
-                        "client_id": client_id,
-                    },
-                    ensure_ascii=False,
-                )
-            )
+            await self._send_event(connection, "ready", chat_id=default_chat_id, client_id=client_id)
             # Register only after ready is successfully sent to avoid out-of-order sends
             self._conn_default[connection] = default_chat_id
             self._attach(connection, default_chat_id)
@@ -447,12 +439,12 @@ class WebSocketChannel(BaseChannel):
                         logger.warning("websocket: ignoring non-utf8 binary frame")
                         continue
 
-                envelope = _parse_envelope(raw)
-                if envelope is not None:
-                    await self._dispatch_envelope(connection, client_id, envelope)
+                parsed = _try_parse_json_object(raw)
+                if parsed is not None and isinstance(parsed.get("type"), str):
+                    await self._dispatch_envelope(connection, client_id, parsed)
                     continue
 
-                content = _parse_inbound_payload(raw)
+                content = _extract_legacy_text(raw, data=parsed)
                 if content is None:
                     continue
                 await self._handle_message(
