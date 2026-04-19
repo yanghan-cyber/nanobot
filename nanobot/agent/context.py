@@ -136,6 +136,7 @@ class ContextBuilder:
         chat_id: str | None = None,
         current_role: str = "user",
         session_summary: str | None = None,
+        system_prompt: str | None = None,
     ) -> list[dict[str, Any]]:
         """Build the complete message list for an LLM call."""
         runtime_ctx = self._build_runtime_context(channel, chat_id, self.timezone, session_summary=session_summary)
@@ -147,8 +148,9 @@ class ContextBuilder:
             merged = f"{runtime_ctx}\n\n{user_content}"
         else:
             merged = [{"type": "text", "text": runtime_ctx}] + user_content
+        effective_prompt = system_prompt if system_prompt is not None else self.build_system_prompt(skill_names, channel=channel)
         messages = [
-            {"role": "system", "content": self.build_system_prompt(skill_names, channel=channel)},
+            {"role": "system", "content": effective_prompt},
             *history,
         ]
         if messages[-1].get("role") == current_role:

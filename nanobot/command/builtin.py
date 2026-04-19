@@ -105,6 +105,7 @@ async def cmd_new(ctx: CommandContext) -> OutboundMessage:
     session = ctx.session or loop.sessions.get_or_create(ctx.key)
     snapshot = session.messages[session.last_consolidated:]
     session.clear()
+    loop.invalidate_frozen_prompt(session.key)
     loop.sessions.save(session)
     loop.sessions.invalidate(session.key)
     if snapshot:

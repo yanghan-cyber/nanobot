@@ -252,6 +252,7 @@ class AgentLoop:
         if _tc.my.enable:
             self.tools.register(MyTool(loop=self, modify_allowed=_tc.my.allow_set))
         self._runtime_vars: dict[str, Any] = {}
+        self._frozen_prompts: dict[str, str] = {}
         self._current_iteration: int = 0
         self.commands = CommandRouter()
         register_builtin_commands(self.commands)
@@ -328,6 +329,18 @@ class AgentLoop:
             if tool := self.tools.get(name):
                 if hasattr(tool, "set_context"):
                     tool.set_context(channel, chat_id, *([message_id] if name == "message" else []))
+
+    def _get_frozen_prompt(self, session_key: str, channel: str | None = None) -> str:
+        """Return a frozen system prompt for *session_key*, building it on first call."""
+        if session_key not in self._frozen_prompts:
+            if len(self._frozen_prompts) > 256:
+                self._frozen_prompts.clear()
+            self._frozen_prompts[session_key] = self.context.build_system_prompt(channel=channel)
+        return self._frozen_prompts[session_key]
+
+    def invalidate_frozen_prompt(self, session_key: str) -> None:
+        """Drop the cached system prompt so the next turn rebuilds it from disk."""
+        self._frozen_prompts.pop(session_key, None)
 
     @staticmethod
     def _strip_think(text: str | None) -> str | None:
@@ -651,7 +664,10 @@ class AgentLoop:
             if self._restore_pending_user_turn(session):
                 self.sessions.save(session)
 
+            _prev = session
             session, pending = self.auto_compact.prepare_session(session, key)
+            if session is not _prev:
+                self.invalidate_frozen_prompt(key)
 
             await self.consolidator.maybe_consolidate_by_tokens(session)
             # Persist subagent follow-ups into durable history BEFORE prompt
@@ -668,6 +684,7 @@ class AgentLoop:
 
             # Subagent content is already in `history` above; passing it again
             # as current_message would double-project it into the prompt.
+            frozen_sp = self._get_frozen_prompt(key, channel=channel)
             messages = self.context.build_messages(
                 history=history,
                 current_message="" if is_subagent else msg.content,
@@ -675,6 +692,7 @@ class AgentLoop:
                 chat_id=chat_id,
                 session_summary=pending,
                 current_role=current_role,
+                system_prompt=frozen_sp,
             )
             final_content, _, all_msgs, _, _ = await self._run_agent_loop(
                 messages, session=session, channel=channel, chat_id=chat_id,
@@ -706,7 +724,10 @@ class AgentLoop:
         if self._restore_pending_user_turn(session):
             self.sessions.save(session)
 
+        _prev = session
         session, pending = self.auto_compact.prepare_session(session, key)
+        if session is not _prev:
+            self.invalidate_frozen_prompt(key)
 
         # Slash commands
         raw = msg.content.strip()
@@ -723,6 +744,7 @@ class AgentLoop:
 
         history = session.get_history(max_messages=0)
 
+        frozen_sp = self._get_frozen_prompt(key, channel=msg.channel)
         initial_messages = self.context.build_messages(
             history=history,
             current_message=msg.content,
@@ -730,6 +752,7 @@ class AgentLoop:
             media=msg.media if msg.media else None,
             channel=msg.channel,
             chat_id=msg.chat_id,
+            system_prompt=frozen_sp,
         )
 
         async def _bus_progress(content: str, *, tool_hint: bool = False) -> None:
