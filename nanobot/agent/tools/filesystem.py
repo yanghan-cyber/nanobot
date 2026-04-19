@@ -16,7 +16,7 @@ from nanobot.agent.tools.schema import (
     tool_parameters_schema,
 )
 from nanobot.config.paths import get_media_dir
-from nanobot.utils.helpers import build_image_content_blocks, detect_image_mime
+from nanobot.utils.helpers import detect_image_mime
 
 
 def _resolve_path(
@@ -150,8 +150,9 @@ class ReadFileTool(_FsTool):
             "Results are returned in 'LINE_NUM| CONTENT' format, with line numbers "
             "starting at 1.\n"
             "\n"
-            "This tool can read images (eg PNG, JPG, etc). When reading an image file "
-            "the contents are presented visually for analysis.\n"
+            "NOTE: Cannot read image files — image files are detected and "
+            "reported as metadata only. Use vision-capable tools or channels "
+            "to analyze images.\n"
             "\n"
             "This tool can read PDF files (.pdf). For large PDFs (more than 10 pages), "
             "you MUST provide the pages parameter to read specific page ranges "
@@ -192,7 +193,10 @@ class ReadFileTool(_FsTool):
 
             mime = detect_image_mime(raw) or mimetypes.guess_type(path)[0]
             if mime and mime.startswith("image/"):
-                return build_image_content_blocks(raw, mime, str(fp), f"(Image file: {path})")
+                return (
+                    f"Image file detected: {path} ({mime}).\n"
+                    "Use a vision-capable skill or tool to analyze."
+                )
 
             if file_state.is_unchanged(fp, offset=offset, limit=limit):
                 return f"[File unchanged since last read: {path}]"
@@ -202,7 +206,10 @@ class ReadFileTool(_FsTool):
             except UnicodeDecodeError:
                 mime = detect_image_mime(raw) or mimetypes.guess_type(path)[0]
                 if mime and mime.startswith("image/"):
-                    return build_image_content_blocks(raw, mime, str(fp), f"(Image file: {path})")
+                    return (
+                        f"Image file detected: {path} ({mime}).\n"
+                        "Use a vision-capable tool or channel to analyze."
+                    )
                 return f"Error: Cannot read binary file {path} (MIME: {mime or 'unknown'}). Only UTF-8 text and images are supported."
 
             # Normalize CRLF -> LF. Primarily a Windows concern (git autocrlf,

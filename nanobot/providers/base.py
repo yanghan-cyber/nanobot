@@ -12,7 +12,6 @@ from typing import Any
 
 from loguru import logger
 
-from nanobot.utils.helpers import image_placeholder_text
 
 
 @dataclass
@@ -194,13 +193,7 @@ class LLMProvider(ABC):
                         new_items.append(item)
                 # tool messages must have string content (OpenAI API requirement)
                 if msg.get("role") == "tool":
-                    parts = []
-                    for item in new_items:
-                        if isinstance(item, dict) and item.get("type") == "text":
-                            parts.append(item.get("text", ""))
-                        elif isinstance(item, dict) and item.get("type") == "image_url":
-                            path = (item.get("_meta") or {}).get("path", "")
-                            parts.append(f"[image: {path}]" if path else "[image]")
+                    parts = [item.get("text", "") for item in new_items if isinstance(item, dict) and item.get("type") == "text"]
                     clean = dict(msg)
                     clean["content"] = "\n".join(parts) if parts else "(empty)"
                     result.append(clean)
@@ -458,8 +451,9 @@ class LLMProvider(ABC):
                 for b in content:
                     if isinstance(b, dict) and b.get("type") == "image_url":
                         path = (b.get("_meta") or {}).get("path", "")
-                        placeholder = image_placeholder_text(path, empty="[image omitted]")
-                        new_content.append({"type": "text", "text": placeholder})
+                        hint = f"User sent an image ({path}). " if path else "User sent an image. "
+                        hint += "Use a vision-capable skill or tool to analyze. If none is available, ask the user to describe the image."
+                        new_content.append({"type": "text", "text": hint})
                         found = True
                     else:
                         new_content.append(b)
@@ -483,8 +477,9 @@ class LLMProvider(ABC):
                 for i, b in enumerate(content):
                     if isinstance(b, dict) and b.get("type") == "image_url":
                         path = (b.get("_meta") or {}).get("path", "")
-                        placeholder = image_placeholder_text(path, empty="[image omitted]")
-                        content[i] = {"type": "text", "text": placeholder}
+                        hint = f"User sent an image ({path}). " if path else "User sent an image. "
+                        hint += "Use a vision-capable skill or tool to analyze. If none is available, ask the user to describe the image."
+                        content[i] = {"type": "text", "text": hint}
                         found = True
         return found
 

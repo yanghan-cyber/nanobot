@@ -15,7 +15,6 @@ from loguru import logger
 
 from nanobot.agent.tools.base import Tool, tool_parameters
 from nanobot.agent.tools.schema import IntegerSchema, StringSchema, tool_parameters_schema
-from nanobot.utils.helpers import build_image_content_blocks
 
 if TYPE_CHECKING:
     from nanobot.config.schema import WebSearchConfig
@@ -328,8 +327,10 @@ class WebFetchTool(Tool):
                     ctype = r.headers.get("content-type", "")
                     if ctype.startswith("image/"):
                         r.raise_for_status()
-                        raw = await r.aread()
-                        return build_image_content_blocks(raw, ctype, url, f"(Image fetched from: {url})")
+                        return (
+                            f"Image URL detected: {url}.\n"
+                            "Use a vision-capable skill or tool to analyze."
+                        )
         except Exception as e:
             logger.debug("Pre-fetch image detection failed for {}: {}", url, e)
 
@@ -395,7 +396,10 @@ class WebFetchTool(Tool):
 
             ctype = r.headers.get("content-type", "")
             if ctype.startswith("image/"):
-                return build_image_content_blocks(r.content, ctype, url, f"(Image fetched from: {url})")
+                return (
+                    f"Image URL detected: {url}.\n"
+                    "Use a vision-capable skill or tool to analyze."
+                )
 
             if "application/json" in ctype:
                 text, extractor = json.dumps(r.json(), indent=2, ensure_ascii=False), "json"

@@ -94,10 +94,11 @@ class TestReadDedup:
         f = tmp_path / "img.png"
         f.write_bytes(b"\x89PNG\r\n\x1a\nfake-png-data")
         first = await tool.execute(path=str(f))
-        assert isinstance(first, list)
+        assert isinstance(first, str)
+        assert "Image file detected" in first
         second = await tool.execute(path=str(f))
-        # Images should always return full content blocks, not a stub
-        assert isinstance(second, list)
+        # Images return hint, not content blocks
+        assert isinstance(second, str)
 
 
 # ---------------------------------------------------------------------------
