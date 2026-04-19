@@ -669,7 +669,10 @@ class AgentLoop:
             if session is not _prev:
                 self.invalidate_frozen_prompt(key)
 
-            await self.consolidator.maybe_consolidate_by_tokens(session)
+            await self.consolidator.maybe_consolidate_by_tokens(
+                session,
+                session_summary=pending,
+            )
             # Persist subagent follow-ups into durable history BEFORE prompt
             # assembly. ContextBuilder merges adjacent same-role messages for
             # provider compatibility, which previously caused the follow-up to
@@ -735,7 +738,10 @@ class AgentLoop:
         if result := await self.commands.dispatch(ctx):
             return result
 
-        await self.consolidator.maybe_consolidate_by_tokens(session)
+        await self.consolidator.maybe_consolidate_by_tokens(
+            session,
+            session_summary=pending,
+        )
 
         self._set_tool_context(msg.channel, msg.chat_id, msg.metadata.get("message_id"))
         if message_tool := self.tools.get("message"):
