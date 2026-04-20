@@ -446,7 +446,7 @@ class TestSubagentAnnounceSessionKey:
         mgr, bus = self._make_mgr()
 
         origin = {"channel": "telegram", "chat_id": "111", "session_key": "unified:default"}
-        await mgr._announce_result("sub-1", "label", "task", "result", origin, "ok")
+        await mgr._announce_result("sub-1", "label", "result", origin, "ok")
 
         msg = await bus.consume_inbound()
         assert msg.session_key_override == "unified:default"
@@ -458,7 +458,7 @@ class TestSubagentAnnounceSessionKey:
         mgr, bus = self._make_mgr()
 
         origin = {"channel": "telegram", "chat_id": "222", "session_key": "telegram:222"}
-        await mgr._announce_result("sub-2", "label", "task", "result", origin, "ok")
+        await mgr._announce_result("sub-2", "label", "result", origin, "ok")
 
         msg = await bus.consume_inbound()
         assert msg.session_key_override == "telegram:222"
@@ -470,7 +470,7 @@ class TestSubagentAnnounceSessionKey:
         mgr, bus = self._make_mgr()
 
         origin = {"channel": "discord", "chat_id": "333", "session_key": None}
-        await mgr._announce_result("sub-3", "label", "task", "result", origin, "ok")
+        await mgr._announce_result("sub-3", "label", "result", origin, "ok")
 
         msg = await bus.consume_inbound()
         assert msg.session_key_override == "discord:333"
