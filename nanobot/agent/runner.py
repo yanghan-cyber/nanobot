@@ -582,6 +582,10 @@ class AgentRunner:
         hook: AgentHook,
         context: AgentHookContext,
     ):
+        logger.debug(
+            "LLM request starting: model={}, msgs={}, streaming={}, session={}",
+            spec.model, len(messages), hook.wants_streaming(), spec.session_key,
+        )
         kwargs = self._build_request_kwargs(
             spec,
             messages,

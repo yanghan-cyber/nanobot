@@ -7,11 +7,13 @@ helpers from :mod:`nanobot.providers.openai_responses`.
 
 from __future__ import annotations
 
+import os
 import uuid
 from collections.abc import Awaitable, Callable
 from typing import Any
 
 from openai import AsyncOpenAI
+import httpx
 
 from nanobot.providers.base import LLMProvider, LLMResponse
 from nanobot.providers.openai_responses import (
@@ -54,11 +56,18 @@ class AzureOpenAIProvider(LLMProvider):
 
         # SDK client targeting the Azure Responses API endpoint
         base_url = f"{api_base.rstrip('/')}/openai/v1/"
+        _raw = os.environ.get("NANOBOT_HTTP_TIMEOUT_S", "180")
+        try:
+            http_timeout = int(_raw)
+        except ValueError:
+            logger.warning("NANOBOT_HTTP_TIMEOUT_S={!r} invalid, using 180", _raw)
+            http_timeout = 180
         self._client = AsyncOpenAI(
             api_key=api_key,
             base_url=base_url,
             default_headers={"x-session-affinity": uuid.uuid4().hex},
             max_retries=0,
+            timeout=httpx.Timeout(http_timeout, connect=10.0),
         )
 
     # ------------------------------------------------------------------

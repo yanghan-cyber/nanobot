@@ -10,6 +10,7 @@ import string
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+import httpx
 import json_repair
 
 from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
@@ -50,6 +51,13 @@ class AnthropicProvider(LLMProvider):
             client_kw["default_headers"] = extra_headers
         # Keep retries centralized in LLMProvider._run_with_retry to avoid retry amplification.
         client_kw["max_retries"] = 0
+        _raw = os.environ.get("NANOBOT_HTTP_TIMEOUT_S", "180")
+        try:
+            http_timeout = int(_raw)
+        except ValueError:
+            logger.warning("NANOBOT_HTTP_TIMEOUT_S={!r} invalid, using 180", _raw)
+            http_timeout = 180
+        client_kw["timeout"] = httpx.Timeout(http_timeout, connect=10.0)
         self._client = AsyncAnthropic(**client_kw)
 
     @classmethod

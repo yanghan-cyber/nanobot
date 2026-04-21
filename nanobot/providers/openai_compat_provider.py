@@ -14,6 +14,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
+import httpx
 import json_repair
 from loguru import logger
 
@@ -198,11 +199,18 @@ class OpenAICompatProvider(LLMProvider):
         if extra_headers:
             default_headers.update(extra_headers)
 
+        _raw = os.environ.get("NANOBOT_HTTP_TIMEOUT_S", "180")
+        try:
+            http_timeout = int(_raw)
+        except ValueError:
+            logger.warning("NANOBOT_HTTP_TIMEOUT_S={!r} invalid, using 180", _raw)
+            http_timeout = 180
         self._client = AsyncOpenAI(
             api_key=api_key or "no-key",
             base_url=effective_base,
             default_headers=default_headers,
             max_retries=0,
+            timeout=httpx.Timeout(http_timeout, connect=10.0),
         )
 
         # Responses API circuit breaker: skip after repeated failures,
