@@ -242,6 +242,7 @@ class TestCmdNewUnifiedSession:
             sessions=sessions,
             consolidator=SimpleNamespace(archive=AsyncMock(return_value=True)),
             invalidate_frozen_prompt=lambda _: None,
+            _cancel_active_tasks=AsyncMock(return_value=0),
         )
         loop._schedule_background = lambda coro: asyncio.ensure_future(coro)
 
@@ -276,6 +277,7 @@ class TestCmdNewUnifiedSession:
             sessions=sessions,
             consolidator=SimpleNamespace(archive=AsyncMock(return_value=True)),
             invalidate_frozen_prompt=lambda _: None,
+            _cancel_active_tasks=AsyncMock(return_value=0),
         )
         loop._schedule_background = lambda coro: asyncio.ensure_future(coro)
 

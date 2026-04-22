@@ -150,13 +150,16 @@ class ReadFileTool(_FsTool):
             "Results are returned in 'LINE_NUM| CONTENT' format, with line numbers "
             "starting at 1.\n"
             "\n"
-            "NOTE: Cannot read image files — image files are detected and "
+            "Cannot read image files — image files are detected and "
             "reported as metadata only. Use vision-capable tools or channels "
             "to analyze images.\n"
             "\n"
             "This tool can read PDF files (.pdf). For large PDFs (more than 10 pages), "
             "you MUST provide the pages parameter to read specific page ranges "
             "(e.g., pages='1-5'). Maximum 20 pages per request.\n"
+            "\n"
+            "Supports document formats: DOCX, XLSX, PPTX. Text is extracted and "
+            "returned as plain text.\n"
             "\n"
             "This tool can only read files, not directories. To read a directory, use "
             "the list_dir tool instead.\n"
@@ -186,6 +189,10 @@ class ReadFileTool(_FsTool):
             # PDF support
             if fp.suffix.lower() == ".pdf":
                 return self._read_pdf(fp, pages)
+
+            # Office document support
+            if fp.suffix.lower() in {".docx", ".xlsx", ".pptx"}:
+                return self._read_office_doc(fp)
 
             raw = fp.read_bytes()
             if not raw:
@@ -295,6 +302,25 @@ class ReadFileTool(_FsTool):
             result += f"\n\n(Showing pages {start + 1}-{end + 1} of {total_pages}. Use pages='{end + 2}-{min(end + 1 + self._MAX_PDF_PAGES, total_pages)}' to continue.)"
         if len(result) > self._MAX_CHARS:
             result = result[:self._MAX_CHARS] + "\n\n(PDF text truncated at ~128K chars)"
+        return result
+
+    def _read_office_doc(self, fp: Path) -> str:
+        from nanobot.utils.document import extract_text
+
+        result = extract_text(fp)
+
+        if result is None:
+            return f"Error: Unsupported file format: {fp.suffix}"
+
+        if result.startswith("[error:"):
+            return f"Error reading {fp.suffix.upper()} file: {result}"
+
+        if not result:
+            return f"({fp.suffix.upper().lstrip('.')} has no extractable text: {fp})"
+
+        if len(result) > self._MAX_CHARS:
+            result = result[:self._MAX_CHARS] + "\n\n(Document text truncated at ~128K chars)"
+
         return result
 
 
