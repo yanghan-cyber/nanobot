@@ -241,14 +241,21 @@ _IS_WINDOWS = sys.platform == "win32"
         timeout=IntegerSchema(
             60,
             description=(
-                "Timeout in seconds. Increase for long-running commands "
-                "like compilation or installation (default 60, max 600)."
+                "Timeout in seconds for foreground commands only "
+                "(default 60, max 600). "
+                "Ignored when run_in_background=True — background tasks "
+                "run until completion with no execution timeout."
             ),
             minimum=1,
             maximum=600,
         ),
         run_in_background=BooleanSchema(
-            description="Run command in background. Returns a bg_id for tracking.",
+            description=(
+                "Run command in background. Returns a bg_id for tracking. "
+                "Background tasks have no execution timeout — they run until "
+                "completion. Completed task metadata is cleaned up after TTL "
+                "(default 2h)."
+            ),
             default=False,
         ),
         required=["command", "purpose"],
