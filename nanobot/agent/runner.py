@@ -363,6 +363,40 @@ class AgentRunner:
                 await hook.after_iteration(context)
                 continue
 
+            # --- Length recovery: intercept ALL finish_reason='length' first ---
+            # When output is truncated (regardless of whether the LLM was generating
+            # tool calls or text), discard incomplete tool calls and inject a
+            # continuation prompt so the LLM can adjust its strategy.
+            clean = hook.finalize_content(context, response.content)
+            if response.finish_reason == "length":
+                length_recovery_count += 1
+                if response.has_tool_calls:
+                    logger.warning(
+                        "Ignoring incomplete tool calls under finish_reason='length' for {}",
+                        spec.session_key or "default",
+                    )
+                if length_recovery_count <= _MAX_LENGTH_RECOVERIES:
+                    logger.info(
+                        "Output truncated on turn {} for {} ({}/{}); continuing",
+                        iteration,
+                        spec.session_key or "default",
+                        length_recovery_count,
+                        _MAX_LENGTH_RECOVERIES,
+                    )
+                    if hook.wants_streaming():
+                        await hook.on_stream_end(context, resuming=True)
+                    if not is_blank_text(clean):
+                        messages.append(build_assistant_message(
+                            clean,
+                            reasoning_content=response.reasoning_content,
+                            thinking_blocks=response.thinking_blocks,
+                        ))
+                    messages.append(build_length_recovery_message())
+                    await hook.after_iteration(context)
+                    continue
+                # Length recoveries exhausted; fall through to finalization.
+
+            # --- Tool calls with non-length finish_reason ---
             if response.has_tool_calls:
                 logger.warning(
                     "Ignoring tool calls under finish_reason='{}' for {}",
@@ -370,7 +404,7 @@ class AgentRunner:
                     spec.session_key or "default",
                 )
 
-            clean = hook.finalize_content(context, response.content)
+            # --- Empty response retry ---
             if response.finish_reason != "error" and is_blank_text(clean):
                 empty_content_retries += 1
                 if empty_content_retries < _MAX_EMPTY_RETRIES:
@@ -382,7 +416,7 @@ class AgentRunner:
                         _MAX_EMPTY_RETRIES,
                     )
                     if hook.wants_streaming():
-                        await hook.on_stream_end(context, resuming=False)
+                        await hook.on_stream_end(context, resuming=True)
                     await hook.after_iteration(context)
                     continue
                 logger.warning(
@@ -392,7 +426,7 @@ class AgentRunner:
                     empty_content_retries,
                 )
                 if hook.wants_streaming():
-                    await hook.on_stream_end(context, resuming=False)
+                    await hook.on_stream_end(context, resuming=True)
                 response = await self._request_finalization_retry(spec, messages_for_model)
                 retry_usage = self._usage_dict(response.usage)
                 self._accumulate_usage(usage, retry_usage)
@@ -401,27 +435,6 @@ class AgentRunner:
                 context.usage = dict(raw_usage)
                 context.tool_calls = list(response.tool_calls)
                 clean = hook.finalize_content(context, response.content)
-
-            if response.finish_reason == "length" and not is_blank_text(clean):
-                length_recovery_count += 1
-                if length_recovery_count <= _MAX_LENGTH_RECOVERIES:
-                    logger.info(
-                        "Output truncated on turn {} for {} ({}/{}); continuing",
-                        iteration,
-                        spec.session_key or "default",
-                        length_recovery_count,
-                        _MAX_LENGTH_RECOVERIES,
-                    )
-                    if hook.wants_streaming():
-                        await hook.on_stream_end(context, resuming=True)
-                    messages.append(build_assistant_message(
-                        clean,
-                        reasoning_content=response.reasoning_content,
-                        thinking_blocks=response.thinking_blocks,
-                    ))
-                    messages.append(build_length_recovery_message())
-                    await hook.after_iteration(context)
-                    continue
 
             assistant_message: dict[str, Any] | None = None
             if response.finish_reason != "error" and not is_blank_text(clean):
