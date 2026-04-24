@@ -719,3 +719,65 @@ class TestBashToolSetContext:
             session_key="cli:direct",
         )
         assert tool._bus is mock_bus
+
+
+# ---------------------------------------------------------------------------
+# TestBackgroundOrigin — background tasks store origin info
+# ---------------------------------------------------------------------------
+
+
+class TestBackgroundOrigin:
+    """Test that background tasks store origin info in _bg_meta."""
+
+    @pytest.mark.asyncio
+    async def test_bg_meta_stores_origin(self):
+        from nanobot.agent.tools.shell import _bg_meta
+
+        tool = BashTool()
+        mock_bus = MagicMock()
+        tool.set_context(
+            bus=mock_bus,
+            channel="feishu",
+            chat_id="chat_123",
+            session_key="feishu:chat_123",
+        )
+        with patch("nanobot.agent.tools.shell.asyncio.create_subprocess_exec") as mock_exec:
+            mock_process = AsyncMock()
+            mock_process.pid = 88888
+            mock_exec.return_value = mock_process
+            with patch.object(tool, "_resolve_shell", return_value="/bin/bash"):
+                with patch("nanobot.agent.tools.shell.get_data_dir") as mock_dir:
+                    mock_dir.return_value = Path("/tmp/nanobot-test")
+                    with patch("builtins.open", MagicMock()):
+                        await tool.execute(
+                            command="sleep 100",
+                            run_in_background=True,
+                            purpose="test origin",
+                        )
+        bg_ids = [k for k in _bg_meta if k.startswith("bash_bg_")]
+        assert len(bg_ids) >= 1
+        meta = _bg_meta[bg_ids[-1]]
+        assert meta["channel"] == "feishu"
+        assert meta["chat_id"] == "chat_123"
+        assert meta["session_key"] == "feishu:chat_123"
+        assert meta["bus"] is mock_bus
+        for bg_id in bg_ids:
+            _bg_meta.pop(bg_id, None)
+
+    @pytest.mark.asyncio
+    async def test_bg_return_message_mentions_notification(self):
+        tool = BashTool()
+        with patch("nanobot.agent.tools.shell.asyncio.create_subprocess_exec") as mock_exec:
+            mock_process = AsyncMock()
+            mock_process.pid = 77777
+            mock_exec.return_value = mock_process
+            with patch.object(tool, "_resolve_shell", return_value="/bin/bash"):
+                with patch("nanobot.agent.tools.shell.get_data_dir") as mock_dir:
+                    mock_dir.return_value = Path("/tmp/nanobot-test")
+                    with patch("builtins.open", MagicMock()):
+                        result = await tool.execute(
+                            command="sleep 100",
+                            run_in_background=True,
+                            purpose="test msg",
+                        )
+        assert "notified" in result.lower() or "notification" in result.lower()

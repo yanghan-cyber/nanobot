@@ -541,6 +541,10 @@ class BashTool(Tool):
                     "start_time": datetime.now().isoformat(),
                     "status": "running",
                     "output_file": str(output_file),
+                    "channel": self._origin_channel.get(),
+                    "chat_id": self._origin_chat_id.get(),
+                    "session_key": self._session_key.get(),
+                    "bus": self._bus,
                 }
                 _bg_file_handles[bg_id] = fh
 
@@ -550,9 +554,9 @@ class BashTool(Tool):
                 f"Background task started.\n"
                 f"bash_bg_id: {bg_id}\n"
                 f"Command: {command}\n\n"
-                f"Use `shell_bg(action='output', bash_bg_id='{bg_id}')` to read output.\n"
-                f"Use `shell_bg(action='kill', bash_bg_id='{bg_id}')` to terminate.\n"
-                f"Use `shell_bg(action='list')` to see all background tasks."
+                f"You will be notified when the task completes. No need to poll.\n"
+                f"Use `shell_bg(action='output', bash_bg_id='{bg_id}')` to check output at any time.\n"
+                f"Use `shell_bg(action='kill', bash_bg_id='{bg_id}')` to terminate."
             )
 
         except Exception as e:
