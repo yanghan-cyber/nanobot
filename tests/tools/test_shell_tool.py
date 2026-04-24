@@ -681,3 +681,41 @@ class TestShellBgTool:
 
         # Should not raise
         await _monitor_process("bash_bg_nonexistent")
+
+
+# ---------------------------------------------------------------------------
+# BashTool set_context / origin ContextVar
+# ---------------------------------------------------------------------------
+
+
+class TestBashToolSetContext:
+    """Test BashTool set_context stores origin info via ContextVar."""
+
+    def test_set_context_stores_values(self):
+        tool = BashTool()
+        tool.set_context(
+            bus=None,
+            channel="feishu",
+            chat_id="chat_abc",
+            session_key="feishu:chat_abc",
+        )
+        assert tool._origin_channel.get() == "feishu"
+        assert tool._origin_chat_id.get() == "chat_abc"
+        assert tool._session_key.get() == "feishu:chat_abc"
+
+    def test_set_context_defaults(self):
+        tool = BashTool()
+        assert tool._origin_channel.get() == "cli"
+        assert tool._origin_chat_id.get() == "direct"
+        assert tool._session_key.get() == "cli:direct"
+
+    def test_set_context_stores_bus(self):
+        mock_bus = MagicMock()
+        tool = BashTool()
+        tool.set_context(
+            bus=mock_bus,
+            channel="cli",
+            chat_id="direct",
+            session_key="cli:direct",
+        )
+        assert tool._bus is mock_bus

@@ -12,6 +12,7 @@ import sys
 import time
 import uuid
 from collections import deque
+from contextvars import ContextVar
 from datetime import datetime
 from pathlib import Path
 from typing import Any, BinaryIO
@@ -301,6 +302,25 @@ class BashTool(Tool):
         self.restrict_to_workspace = restrict_to_workspace
         self.path_append = path_append
         self.allowed_env_keys = allowed_env_keys or []
+
+        # Origin tracking — set by the agent loop so background tasks know
+        # which channel/chat they belong to.
+        self._origin_channel: ContextVar[str] = ContextVar("bash_origin_channel", default="cli")
+        self._origin_chat_id: ContextVar[str] = ContextVar("bash_origin_chat_id", default="direct")
+        self._session_key: ContextVar[str] = ContextVar("bash_session_key", default="cli:direct")
+        self._bus: Any | None = None
+
+    def set_context(
+        self,
+        bus: Any | None = None,
+        channel: str = "cli",
+        chat_id: str = "direct",
+        session_key: str = "cli:direct",
+    ) -> None:
+        self._bus = bus
+        self._origin_channel.set(channel)
+        self._origin_chat_id.set(chat_id)
+        self._session_key.set(session_key)
 
     @property
     def name(self) -> str:
