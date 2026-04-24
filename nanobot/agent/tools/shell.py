@@ -27,8 +27,10 @@ from nanobot.agent.tools.schema import (
     StringSchema,
     tool_parameters_schema,
 )
+from nanobot.bus.events import InboundMessage
 from nanobot.config.paths import get_data_dir, get_media_dir
 from nanobot.utils.helpers import ensure_dir
+from nanobot.utils.prompt_templates import render_template
 
 # ---------------------------------------------------------------------------
 # Shell resolution
@@ -193,18 +195,16 @@ def _remove_bg_entry(bg_id: str) -> None:
 
 
 async def _monitor_process(bg_id: str) -> None:
-    """Monitor a background process; update meta on completion."""
+    """Monitor a background process; update meta on completion and notify origin."""
     process = _bg_processes.get(bg_id)
     meta = _bg_meta.get(bg_id)
     if not process or not meta:
-        # Cleanup any orphaned resources
         _close_file_handle(_bg_file_handles.pop(bg_id, None))
         return
 
     try:
         exit_code = await process.wait()
         async with _bg_lock:
-            # Don't overwrite if _kill() already set status to "killed"
             if meta.get("status") != "killed":
                 meta["status"] = "completed" if exit_code == 0 else "failed"
             meta["exit_code"] = exit_code
@@ -218,6 +218,41 @@ async def _monitor_process(bg_id: str) -> None:
     finally:
         _close_file_handle(_bg_file_handles.pop(bg_id, None))
         _bg_processes.pop(bg_id, None)
+
+    # Send completion notification via message bus
+    bus = meta.get("bus")
+    if bus is None:
+        return
+    channel = meta.get("channel")
+    chat_id = meta.get("chat_id")
+    session_key = meta.get("session_key")
+    if not channel or not chat_id or not session_key:
+        return
+
+    try:
+        announce_content = render_template(
+            "agent/bg_task_announce.md",
+            bg_id=bg_id,
+            exit_code=meta.get("exit_code", -1),
+            command=meta.get("command", ""),
+        )
+        msg = InboundMessage(
+            channel="system",
+            sender_id="bg_task",
+            chat_id=f"{channel}:{chat_id}",
+            content=announce_content,
+            session_key_override=session_key,
+            metadata={
+                "injected_event": "bg_task_result",
+                "bg_id": bg_id,
+            },
+        )
+        await bus.publish_inbound(msg)
+        logger.debug(
+            "Background task [{}] notified {}:{}", bg_id, channel, chat_id,
+        )
+    except Exception as e:
+        logger.warning("Failed to send bg task notification for {}: {}", bg_id, e)
 
 
 # ---------------------------------------------------------------------------

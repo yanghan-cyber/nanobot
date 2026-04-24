@@ -683,6 +683,96 @@ class TestShellBgTool:
         await _monitor_process("bash_bg_nonexistent")
 
 
+class TestMonitorProcessNotification:
+    """Test that _monitor_process sends InboundMessage on completion."""
+
+    @pytest.mark.asyncio
+    async def test_sends_inbound_on_completion(self):
+        from nanobot.agent.tools.shell import (
+            _bg_meta, _bg_processes, _bg_file_handles, _monitor_process,
+        )
+        from nanobot.bus.events import InboundMessage
+
+        mock_bus = AsyncMock()
+        bg_id = "bash_bg_notif1"
+        mock_process = AsyncMock()
+        mock_process.wait = AsyncMock(return_value=0)
+        mock_process.returncode = 0
+        _bg_processes[bg_id] = mock_process
+        _bg_meta[bg_id] = {
+            "command": "echo done",
+            "purpose": "test",
+            "start_time": "",
+            "status": "running",
+            "output_file": "/tmp/notif.log",
+            "channel": "feishu",
+            "chat_id": "chat_xyz",
+            "session_key": "feishu:chat_xyz",
+            "bus": mock_bus,
+        }
+        try:
+            await _monitor_process(bg_id)
+            assert _bg_meta[bg_id]["status"] == "completed"
+            mock_bus.publish_inbound.assert_called_once()
+            msg = mock_bus.publish_inbound.call_args[0][0]
+            assert isinstance(msg, InboundMessage)
+            assert msg.channel == "system"
+            assert msg.sender_id == "bg_task"
+            assert msg.chat_id == "feishu:chat_xyz"
+            assert msg.session_key_override == "feishu:chat_xyz"
+            assert msg.metadata["injected_event"] == "bg_task_result"
+            assert msg.metadata["bg_id"] == bg_id
+            assert "bash_bg_notif1" in msg.content
+        finally:
+            _bg_meta.pop(bg_id, None)
+
+    @pytest.mark.asyncio
+    async def test_no_notification_without_bus(self):
+        """If bus is None (e.g. CLI mode without set_context), don't crash."""
+        from nanobot.agent.tools.shell import (
+            _bg_meta, _bg_processes, _monitor_process,
+        )
+
+        bg_id = "bash_bg_nobus"
+        mock_process = AsyncMock()
+        mock_process.wait = AsyncMock(return_value=0)
+        mock_process.returncode = 0
+        _bg_processes[bg_id] = mock_process
+        _bg_meta[bg_id] = {
+            "command": "true", "purpose": "test",
+            "start_time": "", "status": "running", "output_file": "/tmp/n.log",
+            "channel": "cli", "chat_id": "direct",
+            "session_key": "cli:direct", "bus": None,
+        }
+        try:
+            await _monitor_process(bg_id)
+            assert _bg_meta[bg_id]["status"] == "completed"
+        finally:
+            _bg_meta.pop(bg_id, None)
+
+    @pytest.mark.asyncio
+    async def test_no_notification_without_origin(self):
+        """If meta has no channel/session_key keys (old-style), don't crash."""
+        from nanobot.agent.tools.shell import (
+            _bg_meta, _bg_processes, _monitor_process,
+        )
+
+        bg_id = "bash_bg_noorigin"
+        mock_process = AsyncMock()
+        mock_process.wait = AsyncMock(return_value=0)
+        mock_process.returncode = 0
+        _bg_processes[bg_id] = mock_process
+        _bg_meta[bg_id] = {
+            "command": "true", "purpose": "test",
+            "start_time": "", "status": "running", "output_file": "/tmp/n.log",
+        }
+        try:
+            await _monitor_process(bg_id)
+            assert _bg_meta[bg_id]["status"] == "completed"
+        finally:
+            _bg_meta.pop(bg_id, None)
+
+
 # ---------------------------------------------------------------------------
 # BashTool set_context / origin ContextVar
 # ---------------------------------------------------------------------------
