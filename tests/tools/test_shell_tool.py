@@ -727,6 +727,73 @@ class TestMonitorProcessNotification:
             _bg_meta.pop(bg_id, None)
 
     @pytest.mark.asyncio
+    async def test_sends_notification_on_nonzero_exit(self):
+        """Notification fires even when process exits with non-zero."""
+        from nanobot.agent.tools.shell import (
+            _bg_meta, _bg_processes, _monitor_process,
+        )
+
+        mock_bus = AsyncMock()
+        bg_id = "bash_bg_notif_fail"
+        mock_process = AsyncMock()
+        mock_process.wait = AsyncMock(return_value=1)
+        mock_process.returncode = 1
+        _bg_processes[bg_id] = mock_process
+        _bg_meta[bg_id] = {
+            "command": "false",
+            "purpose": "test",
+            "start_time": "",
+            "status": "running",
+            "output_file": "/tmp/notif_fail.log",
+            "channel": "feishu",
+            "chat_id": "chat_xyz",
+            "session_key": "feishu:chat_xyz",
+            "bus": mock_bus,
+        }
+        try:
+            await _monitor_process(bg_id)
+            assert _bg_meta[bg_id]["status"] == "failed"
+            mock_bus.publish_inbound.assert_called_once()
+            msg = mock_bus.publish_inbound.call_args[0][0]
+            assert msg.metadata["bg_id"] == bg_id
+            assert "exit_code" in msg.content or "1" in msg.content
+        finally:
+            _bg_meta.pop(bg_id, None)
+
+    @pytest.mark.asyncio
+    async def test_sends_notification_on_wait_exception(self):
+        """Notification fires when process.wait() raises."""
+        from nanobot.agent.tools.shell import (
+            _bg_meta, _bg_processes, _monitor_process,
+        )
+
+        mock_bus = AsyncMock()
+        bg_id = "bash_bg_notif_exc"
+        mock_process = AsyncMock()
+        mock_process.wait = AsyncMock(side_effect=RuntimeError("process died"))
+        _bg_processes[bg_id] = mock_process
+        _bg_meta[bg_id] = {
+            "command": "crash",
+            "purpose": "test",
+            "start_time": "",
+            "status": "running",
+            "output_file": "/tmp/notif_exc.log",
+            "channel": "feishu",
+            "chat_id": "chat_xyz",
+            "session_key": "feishu:chat_xyz",
+            "bus": mock_bus,
+        }
+        try:
+            await _monitor_process(bg_id)
+            assert _bg_meta[bg_id]["status"] == "failed"
+            assert _bg_meta[bg_id]["error"] == "process died"
+            mock_bus.publish_inbound.assert_called_once()
+            msg = mock_bus.publish_inbound.call_args[0][0]
+            assert msg.metadata["bg_id"] == bg_id
+        finally:
+            _bg_meta.pop(bg_id, None)
+
+    @pytest.mark.asyncio
     async def test_no_notification_without_bus(self):
         """If bus is None (e.g. CLI mode without set_context), don't crash."""
         from nanobot.agent.tools.shell import (
