@@ -17,7 +17,7 @@ from nanobot.agent.autocompact import AutoCompact
 from nanobot.agent.context import ContextBuilder
 from nanobot.agent.hook import AgentHook, AgentHookContext, CompositeHook
 from nanobot.agent.memory import Consolidator, Dream
-from nanobot.agent.runner import _MAX_INJECTIONS_PER_TURN, AgentRunSpec, AgentRunner
+from nanobot.agent.runner import _MAX_INJECTIONS_PER_TURN, AgentRunner, AgentRunSpec
 from nanobot.agent.skills import BUILTIN_SKILLS_DIR
 from nanobot.agent.subagent import SubagentManager
 from nanobot.agent.tools.cron import CronTool
@@ -49,7 +49,12 @@ from nanobot.utils.progress_events import (
 from nanobot.utils.runtime import EMPTY_FINAL_RESPONSE_MESSAGE
 
 if TYPE_CHECKING:
-    from nanobot.config.schema import BashToolConfig, ChannelsConfig, MyToolConfig, ToolsConfig, WebToolsConfig
+    from nanobot.config.schema import (
+        BashToolConfig,
+        ChannelsConfig,
+        ToolsConfig,
+        WebToolsConfig,
+    )
     from nanobot.cron.service import CronService
 
 
@@ -189,7 +194,7 @@ class AgentLoop:
         disabled_skills: list[str] | None = None,
         tools_config: ToolsConfig | None = None,
     ):
-        from nanobot.config.schema import BashToolConfig, MyToolConfig, ToolsConfig, WebToolsConfig
+        from nanobot.config.schema import BashToolConfig, ToolsConfig, WebToolsConfig
 
         _tc = tools_config or ToolsConfig()
         defaults = AgentDefaults()
