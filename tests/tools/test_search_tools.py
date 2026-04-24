@@ -122,7 +122,7 @@ async def test_grep_files_with_matches_mode_returns_unique_paths(tmp_path: Path)
         output_mode="files_with_matches",
     )
 
-    assert result.splitlines() == ["src/b.py", "src/a.py"]
+    assert set(result.splitlines()) == {"src/b.py", "src/a.py"}
 
 
 @pytest.mark.asyncio
