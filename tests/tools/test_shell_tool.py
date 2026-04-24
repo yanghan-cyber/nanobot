@@ -781,3 +781,39 @@ class TestBackgroundOrigin:
                             purpose="test msg",
                         )
         assert "notified" in result.lower() or "notification" in result.lower()
+
+
+# ---------------------------------------------------------------------------
+# TestBgTaskAnnounceTemplate — background task completion template
+# ---------------------------------------------------------------------------
+
+
+class TestBgTaskAnnounceTemplate:
+    """Test the bg_task_announce.md template renders correctly."""
+
+    def test_renders_with_exit_code_0(self):
+        from nanobot.utils.prompt_templates import render_template
+
+        result = render_template(
+            "agent/bg_task_announce.md",
+            bg_id="bash_bg_abc123",
+            exit_code=0,
+            command="npm run build",
+        )
+        assert "bash_bg_abc123" in result
+        assert "completed" in result.lower()
+        assert "npm run build" in result
+        assert "shell_bg" in result
+
+    def test_renders_with_nonzero_exit(self):
+        from nanobot.utils.prompt_templates import render_template
+
+        result = render_template(
+            "agent/bg_task_announce.md",
+            bg_id="bash_bg_fail99",
+            exit_code=1,
+            command="make test",
+        )
+        assert "bash_bg_fail99" in result
+        assert "1" in result
+        assert "make test" in result
