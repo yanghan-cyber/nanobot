@@ -205,6 +205,7 @@ async def _monitor_process(bg_id: str) -> None:
     try:
         exit_code = await process.wait()
         async with _bg_lock:
+            # Don't overwrite if _kill() already set status to "killed"
             if meta.get("status") != "killed":
                 meta["status"] = "completed" if exit_code == 0 else "failed"
             meta["exit_code"] = exit_code
@@ -222,11 +223,17 @@ async def _monitor_process(bg_id: str) -> None:
     # Send completion notification via message bus
     bus = meta.get("bus")
     if bus is None:
+        logger.debug("No bus set for bg task [{}], skipping notification", bg_id)
         return
     channel = meta.get("channel")
     chat_id = meta.get("chat_id")
     session_key = meta.get("session_key")
     if not channel or not chat_id or not session_key:
+        logger.debug(
+            "Missing origin info for bg task [{}] (channel={}, chat_id={}, session_key={}), "
+            "skipping notification",
+            bg_id, channel, chat_id, session_key,
+        )
         return
 
     try:
@@ -836,13 +843,21 @@ class ShellBgTool(Tool):
                 return "No background tasks running."
             return "\n".join(rows)
 
+    # -- session-aware lookup -----------------------------------------------
+
+    def _get_bg_meta(self, bg_id: str) -> dict | None:
+        """Return bg meta if it exists and belongs to the current session."""
+        meta = _bg_meta.get(bg_id)
+        if meta and meta.get("session_key", "") == self._session_key.get():
+            return meta
+        return None
+
     # -- output -------------------------------------------------------------
 
     async def _output(self, bash_bg_id: str) -> str:
-        current_session = self._session_key.get()
         async with _bg_lock:
-            meta = _bg_meta.get(bash_bg_id)
-            if not meta or meta.get("session_key", "") != current_session:
+            meta = self._get_bg_meta(bash_bg_id)
+            if not meta:
                 return f"Error: Task '{bash_bg_id}' not found"
             # Copy values we need before releasing lock
             output_file_str = meta["output_file"]
@@ -901,10 +916,9 @@ class ShellBgTool(Tool):
     # -- kill ---------------------------------------------------------------
 
     async def _kill(self, bash_bg_id: str) -> str:
-        current_session = self._session_key.get()
         async with _bg_lock:
-            meta = _bg_meta.get(bash_bg_id)
-            if not meta or meta.get("session_key", "") != current_session:
+            meta = self._get_bg_meta(bash_bg_id)
+            if not meta:
                 return f"Error: Task '{bash_bg_id}' not found"
 
             process = _bg_processes.get(bash_bg_id)
