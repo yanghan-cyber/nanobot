@@ -768,10 +768,20 @@ class ShellBgTool(Tool):
     """Manage background shell tasks: list, read output, or kill."""
 
     _DEFAULT_TAIL = 50
+    _session_key: ContextVar[str] = ContextVar("shell_bg_session_key", default="cli:direct")
 
     def __init__(self, bg_ttl_minutes: int = 120, bg_max_entries: int = 128):
         self._ttl_minutes = bg_ttl_minutes
         self._max_entries = bg_max_entries
+
+    def set_context(
+        self,
+        bus: Any = None,
+        channel: str = "cli",
+        chat_id: str = "direct",
+        session_key: str = "cli:direct",
+    ) -> None:
+        self._session_key.set(session_key)
 
     @property
     def name(self) -> str:
@@ -808,27 +818,31 @@ class ShellBgTool(Tool):
 
     # -- list ---------------------------------------------------------------
 
-    @staticmethod
-    async def _list() -> str:
+    async def _list(self) -> str:
+        current_session = self._session_key.get()
         async with _bg_lock:
             if not _bg_meta:
                 return "No background tasks running."
 
             rows = []
             for bg_id, m in _bg_meta.items():
+                if m.get("session_key", "") != current_session:
+                    continue
                 rows.append(
                     f"  {bg_id}  status={m['status']}  command={m['command']}  "
                     f"purpose={m.get('purpose', '')}"
                 )
+            if not rows:
+                return "No background tasks running."
             return "\n".join(rows)
 
     # -- output -------------------------------------------------------------
 
-    @staticmethod
-    async def _output(bash_bg_id: str) -> str:
+    async def _output(self, bash_bg_id: str) -> str:
+        current_session = self._session_key.get()
         async with _bg_lock:
             meta = _bg_meta.get(bash_bg_id)
-            if not meta:
+            if not meta or meta.get("session_key", "") != current_session:
                 return f"Error: Task '{bash_bg_id}' not found"
             # Copy values we need before releasing lock
             output_file_str = meta["output_file"]
@@ -886,11 +900,11 @@ class ShellBgTool(Tool):
 
     # -- kill ---------------------------------------------------------------
 
-    @staticmethod
-    async def _kill(bash_bg_id: str) -> str:
+    async def _kill(self, bash_bg_id: str) -> str:
+        current_session = self._session_key.get()
         async with _bg_lock:
             meta = _bg_meta.get(bash_bg_id)
-            if not meta:
+            if not meta or meta.get("session_key", "") != current_session:
                 return f"Error: Task '{bash_bg_id}' not found"
 
             process = _bg_processes.get(bash_bg_id)

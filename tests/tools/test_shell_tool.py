@@ -283,6 +283,82 @@ class TestShellBgTool:
 
         assert ShellBgTool().exclusive is False
 
+    # -- session isolation --------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_list_filters_by_session(self):
+        """list() only returns tasks matching current session_key."""
+        from nanobot.agent.tools.shell import ShellBgTool, _bg_meta
+
+        tool = ShellBgTool()
+        saved = _bg_meta.copy()
+        _bg_meta.clear()
+        _bg_meta["bash_bg_s1"] = {
+            "command": "task1", "purpose": "a",
+            "start_time": "", "status": "running", "output_file": "/tmp/s1.log",
+            "session_key": "feishu:chat_111",
+        }
+        _bg_meta["bash_bg_s2"] = {
+            "command": "task2", "purpose": "b",
+            "start_time": "", "status": "completed", "output_file": "/tmp/s2.log",
+            "session_key": "feishu:chat_222",
+        }
+        try:
+            tool.set_context(session_key="feishu:chat_111")
+            result_a = await tool.execute(action="list")
+            assert "bash_bg_s1" in result_a
+            assert "bash_bg_s2" not in result_a
+
+            tool.set_context(session_key="feishu:chat_222")
+            result_b = await tool.execute(action="list")
+            assert "bash_bg_s2" in result_b
+            assert "bash_bg_s1" not in result_b
+        finally:
+            _bg_meta.clear()
+            _bg_meta.update(saved)
+
+    @pytest.mark.asyncio
+    async def test_output_rejects_other_session(self):
+        """output() returns 'not found' for tasks from another session."""
+        from nanobot.agent.tools.shell import ShellBgTool, _bg_meta
+
+        tool = ShellBgTool()
+        tool.set_context(session_key="feishu:chat_111")
+        saved = _bg_meta.copy()
+        _bg_meta.clear()
+        _bg_meta["bash_bg_other"] = {
+            "command": "other", "purpose": "test",
+            "start_time": "", "status": "completed", "output_file": "/tmp/o.log",
+            "session_key": "feishu:chat_999",
+        }
+        try:
+            result = await tool.execute(action="output", bash_bg_id="bash_bg_other")
+            assert "not found" in result.lower()
+        finally:
+            _bg_meta.clear()
+            _bg_meta.update(saved)
+
+    @pytest.mark.asyncio
+    async def test_kill_rejects_other_session(self):
+        """kill() returns 'not found' for tasks from another session."""
+        from nanobot.agent.tools.shell import ShellBgTool, _bg_meta
+
+        tool = ShellBgTool()
+        tool.set_context(session_key="feishu:chat_111")
+        saved = _bg_meta.copy()
+        _bg_meta.clear()
+        _bg_meta["bash_bg_other_kill"] = {
+            "command": "other", "purpose": "test",
+            "start_time": "", "status": "completed", "output_file": "/tmp/ok.log",
+            "session_key": "feishu:chat_999",
+        }
+        try:
+            result = await tool.execute(action="kill", bash_bg_id="bash_bg_other_kill")
+            assert "not found" in result.lower()
+        finally:
+            _bg_meta.clear()
+            _bg_meta.update(saved)
+
     # -- action=list ---------------------------------------------------------
 
     @pytest.mark.asyncio
@@ -297,6 +373,7 @@ class TestShellBgTool:
             "start_time": "2026-01-01T00:00:00",
             "status": "running",
             "output_file": "/tmp/test_output.log",
+            "session_key": "cli:direct",
         }
         try:
             result = await tool.execute(action="list")
@@ -329,10 +406,12 @@ class TestShellBgTool:
         _bg_meta["bash_bg_aaa"] = {
             "command": "cmd_a", "purpose": "a",
             "start_time": "", "status": "running", "output_file": "/tmp/a.log",
+            "session_key": "cli:direct",
         }
         _bg_meta["bash_bg_bbb"] = {
             "command": "cmd_b", "purpose": "b",
             "start_time": "", "status": "completed", "output_file": "/tmp/b.log",
+            "session_key": "cli:direct",
         }
         try:
             result = await tool.execute(action="list")
@@ -361,6 +440,7 @@ class TestShellBgTool:
             "command": "echo test", "purpose": "test",
             "start_time": "", "status": "completed",
             "output_file": str(log_file),
+            "session_key": "cli:direct",
         }
         try:
             result = await tool.execute(action="output", bash_bg_id=bg_id)
@@ -385,6 +465,7 @@ class TestShellBgTool:
             "command": "echo", "purpose": "test",
             "start_time": "", "status": "completed",
             "output_file": str(log_file),
+            "session_key": "cli:direct",
         }
         try:
             result = await tool.execute(action="output", bash_bg_id=bg_id)
@@ -414,6 +495,7 @@ class TestShellBgTool:
             "command": "sleep 999", "purpose": "test",
             "start_time": "", "status": "running",
             "output_file": str(tmp_path / "not_yet.log"),
+            "session_key": "cli:direct",
         }
         try:
             result = await tool.execute(action="output", bash_bg_id=bg_id)
@@ -435,6 +517,7 @@ class TestShellBgTool:
             "command": "true", "purpose": "test",
             "start_time": "", "status": "completed",
             "output_file": str(log_file),
+            "session_key": "cli:direct",
         }
         try:
             result = await tool.execute(action="output", bash_bg_id=bg_id)
@@ -455,6 +538,7 @@ class TestShellBgTool:
             "command": "echo", "purpose": "test",
             "start_time": "", "status": "completed",
             "output_file": str(log_file),
+            "session_key": "cli:direct",
         }
         try:
             result = await tool.execute(action="output", bash_bg_id=bg_id)
@@ -480,6 +564,7 @@ class TestShellBgTool:
             "command": "test", "purpose": "test",
             "start_time": "", "status": "completed",
             "output_file": str(log_file),
+            "session_key": "cli:direct",
         }
         try:
             result = await tool.execute(action="output", bash_bg_id=bg_id)
@@ -502,6 +587,7 @@ class TestShellBgTool:
             "command": "test", "purpose": "test",
             "start_time": "", "status": "completed",
             "output_file": str(log_file),
+            "session_key": "cli:direct",
         }
         try:
             result = await tool.execute(action="output", bash_bg_id=bg_id)
@@ -528,6 +614,7 @@ class TestShellBgTool:
             "command": "sleep 999", "purpose": "test kill",
             "start_time": "", "status": "running",
             "output_file": "/tmp/kill_test.log",
+            "session_key": "cli:direct",
         }
         try:
             with patch.object(
@@ -563,6 +650,7 @@ class TestShellBgTool:
             "command": "echo done", "purpose": "test",
             "start_time": "", "status": "completed",
             "output_file": "/tmp/done.log",
+            "session_key": "cli:direct",
         }
         # No entry in _bg_processes (already cleaned up)
         try:
@@ -587,6 +675,7 @@ class TestShellBgTool:
             "command": "sleep", "purpose": "test",
             "start_time": "", "status": "running",
             "output_file": "/tmp/kfail.log",
+            "session_key": "cli:direct",
         }
         try:
             with patch.object(
