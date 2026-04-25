@@ -20,6 +20,13 @@ from nanobot.agent.memory import Consolidator, Dream
 from nanobot.agent.runner import _MAX_INJECTIONS_PER_TURN, AgentRunner, AgentRunSpec
 from nanobot.agent.skills import BUILTIN_SKILLS_DIR
 from nanobot.agent.subagent import SubagentManager
+from nanobot.agent.tools.ask import (
+    AskUserTool,
+    ask_user_options_from_messages,
+    ask_user_outbound,
+    ask_user_tool_result_messages,
+    pending_ask_user_id,
+)
 from nanobot.agent.tools.cron import CronTool
 from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
 from nanobot.agent.tools.message import MessageTool
@@ -294,6 +301,7 @@ class AgentLoop:
             self.workspace if (self.restrict_to_workspace or self.bash_config.sandbox) else None
         )
         extra_read = [BUILTIN_SKILLS_DIR] if allowed_dir else None
+        self.tools.register(AskUserTool())
         self.tools.register(
             ReadFileTool(
                 workspace=self.workspace, allowed_dir=allowed_dir, extra_allowed_dirs=extra_read
@@ -834,7 +842,7 @@ class AgentLoop:
                 current_role=current_role,
                 system_prompt=frozen_sp,
             )
-            final_content, _, all_msgs, _, _ = await self._run_agent_loop(
+            final_content, _, all_msgs, stop_reason, _ = await self._run_agent_loop(
                 messages, session=session, channel=channel, chat_id=chat_id,
                 message_id=msg.metadata.get("message_id"),
                 pending_queue=pending_queue,
@@ -843,10 +851,17 @@ class AgentLoop:
             self._clear_runtime_checkpoint(session)
             self.sessions.save(session)
             self._schedule_background(self.consolidator.maybe_consolidate_by_tokens(session))
+            options = ask_user_options_from_messages(all_msgs) if stop_reason == "ask_user" else []
+            content, buttons = ask_user_outbound(
+                final_content or "Background task completed.",
+                options,
+                channel,
+            )
             return OutboundMessage(
                 channel=channel,
                 chat_id=chat_id,
-                content=final_content or "Background task completed.",
+                content=content,
+                buttons=buttons,
             )
 
         # Extract document text from media at the processing boundary so all
@@ -888,16 +903,25 @@ class AgentLoop:
 
         history = session.get_history(max_messages=0)
 
-        frozen_sp = self._get_frozen_prompt(key, channel=msg.channel)
-        initial_messages = self.context.build_messages(
-            history=history,
-            current_message=msg.content,
-            session_summary=pending,
-            media=msg.media if msg.media else None,
-            channel=msg.channel,
-            chat_id=msg.chat_id,
-            system_prompt=frozen_sp,
-        )
+        pending_ask_id = pending_ask_user_id(history)
+        if pending_ask_id:
+            initial_messages = ask_user_tool_result_messages(
+                self.context.build_system_prompt(channel=msg.channel),
+                history,
+                pending_ask_id,
+                msg.content,
+            )
+        else:
+            frozen_sp = self._get_frozen_prompt(key, channel=msg.channel)
+            initial_messages = self.context.build_messages(
+                history=history,
+                current_message=msg.content,
+                session_summary=pending,
+                media=msg.media if msg.media else None,
+                channel=msg.channel,
+                chat_id=msg.chat_id,
+                system_prompt=frozen_sp,
+            )
 
         async def _bus_progress(
             content: str,
@@ -938,7 +962,7 @@ class AgentLoop:
         user_persisted_early = False
         media_paths = [p for p in (msg.media or []) if isinstance(p, str) and p]
         has_text = isinstance(msg.content, str) and msg.content.strip()
-        if has_text or media_paths:
+        if not pending_ask_id and (has_text or media_paths):
             extra: dict[str, Any] = {"media": list(media_paths)} if media_paths else {}
             if has_text:
                 runtime_ctx = self.context._build_runtime_context(
@@ -991,13 +1015,19 @@ class AgentLoop:
         logger.info("Response to {}:{}: {}", msg.channel, msg.sender_id, preview)
 
         meta = dict(msg.metadata or {})
-        if on_stream is not None and stop_reason != "error":
+        final_content, buttons = ask_user_outbound(
+            final_content,
+            ask_user_options_from_messages(all_msgs) if stop_reason == "ask_user" else [],
+            msg.channel,
+        )
+        if on_stream is not None and stop_reason not in {"ask_user", "error"}:
             meta["_streamed"] = True
         return OutboundMessage(
             channel=msg.channel,
             chat_id=msg.chat_id,
             content=final_content,
             metadata=meta,
+            buttons=buttons,
         )
 
     def _sanitize_persisted_blocks(

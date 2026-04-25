@@ -42,22 +42,6 @@ class SubagentStatus:
     error: str | None = None
 
 
-@dataclass(slots=True)
-class SubagentStatus:
-    """Real-time status of a running subagent."""
-
-    task_id: str
-    label: str
-    task_description: str
-    started_at: float          # time.monotonic()
-    phase: str = "initializing"  # initializing | awaiting_tools | tools_completed | final_response | done | error
-    iteration: int = 0
-    tool_events: list = field(default_factory=list)   # [{name, status, detail}, ...]
-    usage: dict = field(default_factory=dict)          # token usage
-    stop_reason: str | None = None
-    error: str | None = None
-
-
 class _SubagentHook(AgentHook):
     """Hook for subagent execution — logs tool calls and updates status."""
 
