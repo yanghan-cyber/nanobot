@@ -385,9 +385,14 @@ class OpenAICompatProvider(LLMProvider):
                     normalized.append(tc_clean)
                 clean["tool_calls"] = normalized
                 if clean.get("role") == "assistant":
-                    # Some OpenAI-compatible gateways reject assistant messages
-                    # that mix non-empty content with tool_calls.
-                    clean["content"] = None
+                    # Normalize empty/whitespace-only content to None.
+                    # Non-empty content MUST be preserved — stripping it causes
+                    # the model to lose context of its own previous replies.
+                    if not clean.get("content") or (
+                        isinstance(clean["content"], str)
+                        and not clean["content"].strip()
+                    ):
+                        clean["content"] = None
             if "tool_call_id" in clean and clean["tool_call_id"]:
                 clean["tool_call_id"] = map_id(clean["tool_call_id"])
         return self._enforce_role_alternation(sanitized)
