@@ -94,31 +94,59 @@ class TestBuildEnvWindows:
 class TestPathAppendPlatform:
 
     @pytest.mark.asyncio
-    async def test_path_append_injected_into_command(self):
-        """path_append is injected into command via export for bash."""
+    async def test_unix_uses_env_var_in_fixed_export(self):
+        """On Unix, path_append must not be interpolated into shell source."""
         mock_proc = AsyncMock()
         mock_proc.communicate.return_value = (b"ok", b"")
         mock_proc.returncode = 0
 
         captured_args = []
+        captured_env: dict[str, str] = {}
 
         async def capture_spawn(*args, **kwargs):
             captured_args.extend(args)
+            captured_env.update(kwargs.get("env", {}))
             return mock_proc
 
         with (
             patch("nanobot.agent.tools.shell._IS_WINDOWS", False),
+            patch("nanobot.agent.tools.shell.os.pathsep", ":"),
             patch("asyncio.create_subprocess_exec", new_callable=AsyncMock, side_effect=capture_spawn),
             patch.object(BashTool, "_guard_command", return_value=None),
             patch.object(BashTool, "_resolve_shell", return_value="/bin/bash"),
         ):
-            tool = BashTool(path_append="/opt/bin")
+            tool = BashTool(path_append="/opt/bin; echo INJECTED")
             await tool.execute(command="ls")
 
-        # command arg should contain the export prefix
         command_arg = captured_args[-1]
-        assert 'export PATH="/opt/bin:$PATH"' in command_arg
-        assert "ls" in command_arg
+        assert 'export PATH="$NANOBOT_PATH_APPEND:$PATH"; ls' in command_arg
+        assert captured_env["NANOBOT_PATH_APPEND"] == "/opt/bin; echo INJECTED"
+        assert "INJECTED" not in command_arg
+
+    @pytest.mark.asyncio
+    async def test_windows_modifies_env(self):
+        """On Windows, path_append is appended to PATH in the env dict."""
+        mock_proc = AsyncMock()
+        mock_proc.communicate.return_value = (b"ok", b"")
+        mock_proc.returncode = 0
+
+        captured_env: dict[str, str] = {}
+
+        async def capture_spawn(*args, **kwargs):
+            captured_env.update(kwargs.get("env", {}))
+            return mock_proc
+
+        with (
+            patch("nanobot.agent.tools.shell._IS_WINDOWS", True),
+            patch("nanobot.agent.tools.shell.os.pathsep", ";"),
+            patch("asyncio.create_subprocess_exec", new_callable=AsyncMock, side_effect=capture_spawn),
+            patch.object(BashTool, "_guard_command", return_value=None),
+            patch.object(BashTool, "_resolve_shell", return_value="cmd.exe"),
+        ):
+            tool = BashTool(path_append=r"C:\tools\bin")
+            await tool.execute(command="dir")
+
+        assert captured_env["PATH"].endswith(r";C:\tools\bin")
 
 
 # ---------------------------------------------------------------------------

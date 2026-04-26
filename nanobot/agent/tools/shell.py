@@ -450,13 +450,13 @@ class BashTool(Tool):
         env = self._build_env()
 
         shell = self._resolve_shell()
-        is_bash = "bash" in Path(shell).name.lower()
 
         if self.path_append:
-            if is_bash:
-                command = f'export PATH="{self.path_append}:$PATH"; {command}'
+            if _IS_WINDOWS:
+                env["PATH"] = env.get("PATH", "") + os.pathsep + self.path_append
             else:
-                env["PATH"] = self.path_append + os.pathsep + env.get("PATH", "")
+                env["NANOBOT_PATH_APPEND"] = self.path_append
+                command = f'export PATH="$NANOBOT_PATH_APPEND{os.pathsep}$PATH"; {command}'
 
         if run_in_background:
             return await self._run_background(command, cwd, env, shell, purpose)
@@ -728,8 +728,7 @@ class BashTool(Tool):
                     continue
 
                 media_path = get_media_dir().resolve()
-                if (
-                    p.is_absolute()
+                if (p.is_absolute()
                     and cwd_path not in p.parents
                     and p != cwd_path
                     and media_path not in p.parents
