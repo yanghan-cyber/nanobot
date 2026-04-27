@@ -85,7 +85,7 @@ class ContextBuilder:
         session_summary: str | None = None,
     ) -> str:
         """Build untrusted runtime metadata block for injection before the user message."""
-        lines = [f"Current Time: {current_time_str(timezone)}"]
+        lines = [f"Message Time: {current_time_str(timezone)}"]
         if channel and chat_id:
             lines += [f"Channel: {channel}", f"Chat ID: {chat_id}"]
         if session_summary:

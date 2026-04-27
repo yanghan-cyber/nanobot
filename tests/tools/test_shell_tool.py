@@ -323,6 +323,7 @@ class TestShellBgTool:
         from nanobot.agent.tools.shell import ShellBgTool, _bg_meta
 
         tool = ShellBgTool()
+        tool._session_key.set("cli:direct")
         tool.set_context(session_key="feishu:chat_111")
         saved = _bg_meta.copy()
         _bg_meta.clear()
@@ -344,6 +345,7 @@ class TestShellBgTool:
         from nanobot.agent.tools.shell import ShellBgTool, _bg_meta
 
         tool = ShellBgTool()
+        tool._session_key.set("cli:direct")
         tool.set_context(session_key="feishu:chat_111")
         saved = _bg_meta.copy()
         _bg_meta.clear()
@@ -366,6 +368,7 @@ class TestShellBgTool:
         from nanobot.agent.tools.shell import ShellBgTool, _bg_meta
 
         tool = ShellBgTool()
+        tool._session_key.set("cli:direct")
         bg_id = "bash_bg_listest"
         _bg_meta[bg_id] = {
             "command": "sleep 10",
@@ -388,6 +391,7 @@ class TestShellBgTool:
         from nanobot.agent.tools.shell import ShellBgTool, _bg_meta
 
         tool = ShellBgTool()
+        tool._session_key.set("cli:direct")
         saved = _bg_meta.copy()
         _bg_meta.clear()
         try:
@@ -401,6 +405,7 @@ class TestShellBgTool:
         from nanobot.agent.tools.shell import ShellBgTool, _bg_meta
 
         tool = ShellBgTool()
+        tool._session_key.set("cli:direct")
         saved = _bg_meta.copy()
         _bg_meta.clear()
         _bg_meta["bash_bg_aaa"] = {
@@ -431,6 +436,7 @@ class TestShellBgTool:
         from nanobot.agent.tools.shell import ShellBgTool, _bg_meta
 
         tool = ShellBgTool()
+        tool._session_key.set("cli:direct")
         bg_id = "bash_bg_tail50"
         log_file = tmp_path / "output.log"
         lines = [f"line {i}" for i in range(80)]
@@ -457,6 +463,7 @@ class TestShellBgTool:
         from nanobot.agent.tools.shell import ShellBgTool, _bg_meta
 
         tool = ShellBgTool()
+        tool._session_key.set("cli:direct")
         bg_id = "bash_bg_short"
         log_file = tmp_path / "output.log"
         log_file.write_text("alpha\nbeta\ngamma\n", encoding="utf-8")
@@ -481,6 +488,7 @@ class TestShellBgTool:
         from nanobot.agent.tools.shell import ShellBgTool
 
         tool = ShellBgTool()
+        tool._session_key.set("cli:direct")
         result = await tool.execute(action="output", bash_bg_id="bash_bg_nope")
         assert "not found" in result.lower()
 
@@ -490,6 +498,7 @@ class TestShellBgTool:
         from nanobot.agent.tools.shell import ShellBgTool, _bg_meta
 
         tool = ShellBgTool()
+        tool._session_key.set("cli:direct")
         bg_id = "bash_bg_no_file"
         _bg_meta[bg_id] = {
             "command": "sleep 999", "purpose": "test",
@@ -509,6 +518,7 @@ class TestShellBgTool:
         from nanobot.agent.tools.shell import ShellBgTool, _bg_meta
 
         tool = ShellBgTool()
+        tool._session_key.set("cli:direct")
         bg_id = "bash_bg_empty"
         log_file = tmp_path / "output.log"
         log_file.write_text("", encoding="utf-8")
@@ -530,6 +540,7 @@ class TestShellBgTool:
         from nanobot.agent.tools.shell import ShellBgTool, _bg_meta
 
         tool = ShellBgTool()
+        tool._session_key.set("cli:direct")
         bg_id = "bash_bg_remind"
         log_file = tmp_path / "output.log"
         log_file.write_text("data\n", encoding="utf-8")
@@ -555,6 +566,7 @@ class TestShellBgTool:
         from nanobot.agent.tools.shell import ShellBgTool, _bg_meta
 
         tool = ShellBgTool()
+        tool._session_key.set("cli:direct")
         bg_id = "bash_bg_earlier"
         log_file = tmp_path / "output.log"
         lines = [f"line {i}" for i in range(60)]
@@ -578,6 +590,7 @@ class TestShellBgTool:
         from nanobot.agent.tools.shell import ShellBgTool, _bg_meta
 
         tool = ShellBgTool()
+        tool._session_key.set("cli:direct")
         bg_id = "bash_bg_lnum"
         log_file = tmp_path / "output.log"
         lines = [f"line {i}" for i in range(80)]
@@ -603,6 +616,7 @@ class TestShellBgTool:
         from nanobot.agent.tools.shell import ShellBgTool, _bg_meta, _bg_processes, _bg_file_handles
 
         tool = ShellBgTool()
+        tool._session_key.set("cli:direct")
         bg_id = "bash_bg_kiltest"
         mock_process = AsyncMock()
         mock_process.pid = 54321
@@ -636,6 +650,7 @@ class TestShellBgTool:
         from nanobot.agent.tools.shell import ShellBgTool
 
         tool = ShellBgTool()
+        tool._session_key.set("cli:direct")
         result = await tool.execute(action="kill", bash_bg_id="bash_bg_nonexistent")
         assert "not found" in result.lower()
 
@@ -645,6 +660,7 @@ class TestShellBgTool:
         from nanobot.agent.tools.shell import ShellBgTool, _bg_meta, _bg_processes
 
         tool = ShellBgTool()
+        tool._session_key.set("cli:direct")
         bg_id = "bash_bg_done"
         _bg_meta[bg_id] = {
             "command": "echo done", "purpose": "test",
@@ -666,6 +682,7 @@ class TestShellBgTool:
         from nanobot.agent.tools.shell import ShellBgTool, _bg_meta, _bg_processes
 
         tool = ShellBgTool()
+        tool._session_key.set("cli:direct")
         bg_id = "bash_bg_kfail"
         mock_process = AsyncMock()
         mock_process.pid = 99999

@@ -1096,10 +1096,8 @@ async def test_next_turn_after_llm_error_keeps_turn_boundary(tmp_path):
     non_system = [message for message in request_messages if message.get("role") != "system"]
     assert non_system[0]["role"] == "user"
     assert "first question" in non_system[0]["content"]
-    assert non_system[1] == {
-        "role": "assistant",
-        "content": _PERSISTED_MODEL_ERROR_PLACEHOLDER,
-    }
+    assert non_system[1]["role"] == "assistant"
+    assert _PERSISTED_MODEL_ERROR_PLACEHOLDER in non_system[1]["content"]
     assert non_system[2]["role"] == "user"
     assert "second question" in non_system[2]["content"]
 

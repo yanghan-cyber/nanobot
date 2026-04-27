@@ -81,7 +81,7 @@ def test_runtime_context_is_separate_untrusted_user_message(tmp_path) -> None:
     user_content = messages[-1]["content"]
     assert isinstance(user_content, str)
     assert ContextBuilder._RUNTIME_CONTEXT_TAG in user_content
-    assert "Current Time:" in user_content
+    assert "Message Time:" in user_content
     assert "Channel: cli" in user_content
     assert "Chat ID: direct" in user_content
     assert "Return exactly: OK" in user_content
@@ -188,6 +188,17 @@ def test_identity_has_no_behavioral_instructions(tmp_path) -> None:
     assert "You are nanobot" not in identity
     assert "Act, don't narrate" not in identity
     assert "Execution Rules" not in identity
+
+
+def test_system_prompt_does_not_warn_about_message_time_markers(tmp_path) -> None:
+    """Parroting is prevented by not annotating assistant turns in history;
+    no prompt-level warning about ``[Message Time: ...]`` is needed."""
+    workspace = _make_workspace(tmp_path)
+    builder = ContextBuilder(workspace)
+
+    prompt = builder.build_system_prompt()
+
+    assert "Message Time" not in prompt
 
 
 def test_default_soul_template_contains_execution_rules() -> None:
