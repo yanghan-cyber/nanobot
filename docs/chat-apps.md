@@ -147,7 +147,7 @@ If you prefer to configure manually, add the following to `~/.nanobot/config.jso
 > - `"open"` — Respond to all messages
 > DMs always respond when the sender is in `allowFrom`.
 > - If you set group policy to open create new threads as private threads and then @ the bot into it. Otherwise the thread itself and the channel in which you spawned it will spawn a bot session.
-> `allowChannels` restricts the bot to specific Discord channel IDs. Empty (default) means respond in every channel the bot can see. Example: `["1234567890", "0987654321"]`. The filter applies after `allowFrom`, so both must pass.
+> `allowChannels` restricts the bot to specific Discord channel IDs. Empty (default) means respond in every channel the bot can see. Example: `["1234567890", "0987654321"]`. The filter applies after `allowFrom`, so both must pass. Discord threads under an allowed parent channel are also allowed; for Forum channels, allowing the parent Forum channel allows all threads/posts in that forum.
 > `streaming` defaults to `true`. Disable it only if you explicitly want non-streaming replies.
 
 **5. Invite the bot**
@@ -644,7 +644,11 @@ Create or reuse a Microsoft Teams / Azure bot app registration. Set the bot mess
       "allowFrom": ["*"],
       "replyInThread": true,
       "mentionOnlyResponse": "Hi — what can I help with?",
-      "validateInboundAuth": true
+      "validateInboundAuth": true,
+      "refTtlDays": 30,
+      "pruneWebChatRefs": true,
+      "pruneNonPersonalRefs": true,
+      "refTouchIntervalS": 300
     }
   }
 }
@@ -653,6 +657,10 @@ Create or reuse a Microsoft Teams / Azure bot app registration. Set the bot mess
 > - `replyInThread: true` replies to the triggering Teams activity when a stored `activity_id` is available.
 > - `mentionOnlyResponse` controls what Nanobot receives when a user sends only a bot mention (`<at>Nanobot</at>`). Set to `""` to ignore mention-only messages.
 > - `validateInboundAuth: true` enables inbound Bot Framework bearer-token validation (signature, issuer, audience, lifetime, `serviceUrl`). This is the safe default for public deployments. Only set it to `false` for local development or tightly controlled testing.
+> - `refTtlDays` (default `30`) controls how old stored conversation refs can be before they are pruned.
+> - `pruneWebChatRefs` (default `true`) drops refs with `webchat.botframework.com` service URLs.
+> - `pruneNonPersonalRefs` (default `true`) drops refs whose `conversation_type` is not `personal`.
+> - `refTouchIntervalS` (default `300`) throttles how often successful sends refresh `updated_at` for active refs.
 
 **4. Run**
 

@@ -60,6 +60,7 @@ _KIMI_THINKING_MODELS: frozenset[str] = frozenset({
     "kimi-k2.6",
     "k2.6-code-preview",
 })
+_OPENAI_COMPAT_REQUEST_TIMEOUT_S = 120.0
 
 # Maps ProviderSpec.thinking_style → extra_body builder.
 # Each builder takes a bool (thinking_enabled) and returns the dict to
@@ -88,6 +89,26 @@ def _is_kimi_thinking_model(model_name: str) -> bool:
     if "/" in name and name.rsplit("/", 1)[1] in _KIMI_THINKING_MODELS:
         return True
     return False
+
+
+def _openai_compat_timeout_s() -> float:
+    """Return the bounded request timeout used for OpenAI-compatible providers."""
+    return _float_env("NANOBOT_OPENAI_COMPAT_TIMEOUT_S", _OPENAI_COMPAT_REQUEST_TIMEOUT_S)
+
+
+def _float_env(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        logger.warning("Ignoring invalid {}={!r}; using {}", name, raw, default)
+        return default
+    if value <= 0:
+        logger.warning("Ignoring non-positive {}={!r}; using {}", name, raw, default)
+        return default
+    return value
 
 
 def _short_tool_id() -> str:
@@ -242,13 +263,6 @@ class OpenAICompatProvider(LLMProvider):
         if extra_headers:
             default_headers.update(extra_headers)
 
-        _raw = os.environ.get("NANOBOT_HTTP_TIMEOUT_S", "180")
-        try:
-            http_timeout = int(_raw)
-        except ValueError:
-            logger.warning("NANOBOT_HTTP_TIMEOUT_S={!r} invalid, using 180", _raw)
-            http_timeout = 180
-
         # Local model servers (Ollama, llama.cpp, vLLM) often close idle
         # HTTP connections before the client-side keepalive expires.  When
         # two LLM calls happen seconds apart (e.g. heartbeat _decide then
@@ -258,10 +272,12 @@ class OpenAICompatProvider(LLMProvider):
         # opening a fresh connection for each request, which is cheap on a
         # LAN.  Cloud providers benefit from keepalive, so we leave the
         # default pool settings for them.
+        timeout_s = _openai_compat_timeout_s()
         http_client: httpx.AsyncClient | None = None
         if _is_local_endpoint(spec, effective_base):
             http_client = httpx.AsyncClient(
                 limits=httpx.Limits(keepalive_expiry=0),
+                timeout=timeout_s,
             )
 
         self._client = AsyncOpenAI(
@@ -269,7 +285,7 @@ class OpenAICompatProvider(LLMProvider):
             base_url=effective_base,
             default_headers=default_headers,
             max_retries=0,
-            timeout=httpx.Timeout(http_timeout, connect=10.0),
+            timeout=timeout_s,
             http_client=http_client,
         )
 
@@ -353,10 +369,25 @@ class OpenAICompatProvider(LLMProvider):
             return json.dumps(arguments, ensure_ascii=False)
         return "{}"
 
+    @staticmethod
+    def _coerce_content_to_string(content: Any) -> str | None:
+        """Coerce block/list content into plain text for strict string-only APIs."""
+        if content is None or isinstance(content, str):
+            return content
+        text = OpenAICompatProvider._extract_text_content(content)
+        if isinstance(text, str) and text:
+            return text
+        try:
+            dumped = json.dumps(content, ensure_ascii=False)
+        except Exception:
+            dumped = str(content)
+        return dumped or "(empty)"
+
     def _sanitize_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Strip non-standard keys, normalize tool_call IDs."""
         sanitized = LLMProvider._sanitize_request_messages(messages, _ALLOWED_MSG_KEYS)
         id_map: dict[str, str] = {}
+        force_string_content = bool(self._spec and self._spec.name == "deepseek")
 
         def map_id(value: Any) -> Any:
             if not isinstance(value, str):
@@ -395,6 +426,11 @@ class OpenAICompatProvider(LLMProvider):
                         clean["content"] = None
             if "tool_call_id" in clean and clean["tool_call_id"]:
                 clean["tool_call_id"] = map_id(clean["tool_call_id"])
+            if (
+                force_string_content
+                and not (clean.get("role") == "assistant" and clean.get("tool_calls"))
+            ):
+                clean["content"] = self._coerce_content_to_string(clean.get("content"))
         return self._enforce_role_alternation(sanitized)
 
     def _drop_deepseek_incomplete_reasoning_history(

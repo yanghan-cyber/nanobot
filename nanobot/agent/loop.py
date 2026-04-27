@@ -120,7 +120,7 @@ class _LoopHook(AgentHook):
 
     async def before_execute_tools(self, context: AgentHookContext) -> None:
         if self._on_progress:
-            if not self._on_stream:
+            if not self._on_stream and not context.streamed_content:
                 thought = self._loop._strip_think(
                     context.response.content if context.response else None
                 )
@@ -466,6 +466,11 @@ class AgentLoop:
         return strip_think(text) or None
 
     @staticmethod
+    def _runtime_chat_id(msg: InboundMessage) -> str:
+        """Return the chat id shown in runtime metadata for the model."""
+        return str(msg.metadata.get("context_chat_id") or msg.chat_id)
+
+    @staticmethod
     def _tool_hint(tool_calls: list) -> str:
         """Format tool calls as concise hints with smart abbreviation."""
         from nanobot.utils.tool_hints import format_tool_hints
@@ -507,6 +512,18 @@ class AgentLoop:
         if self._unified_session and not msg.session_key_override:
             return UNIFIED_SESSION_KEY
         return msg.session_key
+
+    def _replay_token_budget(self) -> int:
+        """Derive a token budget for session history replay from the context window."""
+        if self.context_window_tokens <= 0:
+            return 0
+        max_output = getattr(getattr(self.provider, "generation", None), "max_tokens", 4096)
+        try:
+            reserved_output = int(max_output)
+        except (TypeError, ValueError):
+            reserved_output = 4096
+        budget = self.context_window_tokens - max(1, reserved_output) - 1024
+        return budget if budget > 0 else max(128, self.context_window_tokens // 2)
 
     async def _run_agent_loop(
         self,
@@ -574,7 +591,7 @@ class AgentLoop:
                 user_content = self.context._build_user_content(content, media)
                 runtime_ctx = self.context._build_runtime_context(
                     pending_msg.channel,
-                    pending_msg.chat_id,
+                    self._runtime_chat_id(pending_msg),
                     self.context.timezone,
                 )
                 if isinstance(user_content, str):
@@ -900,7 +917,9 @@ class AgentLoop:
                 channel, chat_id, msg.metadata.get("message_id"),
                 msg.metadata, session_key=key,
             )
-            history = session.get_history(max_messages=0)
+            history = session.get_history(
+                max_tokens=self._replay_token_budget(),
+            )
             current_role = "user"
 
             # Subagent content is already in `history` above; passing it again
@@ -923,6 +942,7 @@ class AgentLoop:
                 pending_queue=pending_queue,
             )
             self._save_turn(session, all_msgs, 1 + len(history))
+            session.enforce_file_cap(on_archive=self.context.memory.raw_archive)
             self._clear_runtime_checkpoint(session)
             self.sessions.save(session)
             self._schedule_background(self.consolidator.maybe_consolidate_by_tokens(session))
@@ -988,7 +1008,9 @@ class AgentLoop:
             if isinstance(message_tool, MessageTool):
                 message_tool.start_turn()
 
-        history = session.get_history(max_messages=0)
+        history = session.get_history(
+            max_tokens=self._replay_token_budget(),
+        )
 
         pending_ask_id = pending_ask_user_id(history)
         if pending_ask_id:
@@ -1006,7 +1028,7 @@ class AgentLoop:
                 session_summary=pending,
                 media=msg.media if msg.media else None,
                 channel=msg.channel,
-                chat_id=msg.chat_id,
+                chat_id=self._runtime_chat_id(msg),
                 system_prompt=frozen_sp,
             )
 
@@ -1085,6 +1107,7 @@ class AgentLoop:
         # Skip the already-persisted user message when saving the turn
         save_skip = 1 + len(history) + (1 if user_persisted_early else 0)
         self._save_turn(session, all_msgs, save_skip)
+        session.enforce_file_cap(on_archive=self.context.memory.raw_archive)
         self._clear_pending_user_turn(session)
         self._clear_runtime_checkpoint(session)
         self.sessions.save(session)
