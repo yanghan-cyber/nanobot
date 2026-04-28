@@ -329,4 +329,59 @@ class TestStreamEndReactionCleanup:
         ch._add_reaction.assert_any_call("om_002", "DONE")
         assert "oc_chat1" not in ch._active_reactions
 
+    @pytest.mark.asyncio
+    async def test_no_removal_when_resuming(self):
+        """_resuming=True means more tool-call rounds follow; reaction must persist."""
+        ch = _make_channel()
+        ch.config.done_emoji = "DONE"
+        ch._stream_bufs["oc_chat1"] = _FeishuStreamBuf(
+            text="partial", card_id="card_1", sequence=3, last_edit=0.0,
+        )
+        ch._client.cardkit.v1.card_element.content.return_value = MagicMock(success=MagicMock(return_value=True))
+        ch._client.cardkit.v1.card.settings.return_value = MagicMock(success=MagicMock(return_value=True))
+        ch._remove_reaction = AsyncMock()
+        ch._add_reaction = AsyncMock()
+        ch._active_reactions["oc_chat1"] = [("om_001", "rx_42")]
 
+        await ch.send_delta(
+            "oc_chat1", "",
+            metadata={"_stream_end": True, "_resuming": True},
+        )
+
+        ch._remove_reaction.assert_not_called()
+        ch._add_reaction.assert_not_called()
+        assert "oc_chat1" in ch._active_reactions
+
+    @pytest.mark.asyncio
+    async def test_done_emoji_only_on_final_stream_end(self):
+        """Across resuming rounds, done_emoji is added only on the final round."""
+        ch = _make_channel()
+        ch.config.done_emoji = "DONE"
+        ch._stream_bufs["oc_chat1"] = _FeishuStreamBuf(
+            text="t", card_id="card_1", sequence=3, last_edit=0.0,
+        )
+        ch._client.cardkit.v1.card_element.content.return_value = MagicMock(success=MagicMock(return_value=True))
+        ch._client.cardkit.v1.card.settings.return_value = MagicMock(success=MagicMock(return_value=True))
+        ch._remove_reaction = AsyncMock()
+        ch._add_reaction = AsyncMock()
+        ch._active_reactions["oc_chat1"] = [("om_001", "rx_42")]
+
+        # Intermediate stream end (more tool calls coming).
+        await ch.send_delta(
+            "oc_chat1", "",
+            metadata={"_stream_end": True, "_resuming": True},
+        )
+        ch._remove_reaction.assert_not_called()
+        ch._add_reaction.assert_not_called()
+
+        # Re-prime the stream buffer for the final round (the previous _stream_end popped it).
+        ch._stream_bufs["oc_chat1"] = _FeishuStreamBuf(
+            text="t", card_id="card_1", sequence=5, last_edit=0.0,
+        )
+        # Final stream end (resuming=False): reactions removed, done_emoji added.
+        await ch.send_delta(
+            "oc_chat1", "",
+            metadata={"_stream_end": True, "_resuming": False},
+        )
+        ch._remove_reaction.assert_called_once_with("om_001", "rx_42")
+        ch._add_reaction.assert_called_once_with("om_001", "DONE")
