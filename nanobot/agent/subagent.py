@@ -21,9 +21,17 @@ from nanobot.agent.tools.shell import BashTool, ShellBgTool
 from nanobot.agent.tools.web import WebFetchTool, WebSearchTool
 from nanobot.bus.events import InboundMessage
 from nanobot.bus.queue import MessageBus
+from nanobot.config.paths import get_data_dir
 from nanobot.config.schema import BashToolConfig, WebToolsConfig
 from nanobot.providers.base import LLMProvider
+from nanobot.utils.helpers import ensure_dir
 from nanobot.utils.prompt_templates import render_template
+
+_TAIL_LINES = 50
+
+
+def _subagent_output_path(task_id: str) -> Path:
+    return ensure_dir(get_data_dir() / "tool-output" / "subagent") / f"{task_id}.log"
 
 
 @dataclass(slots=True)
@@ -275,19 +283,33 @@ class SubagentManager:
         """Announce the subagent result to the main agent via the message bus."""
         status_text = "completed successfully" if status == "ok" else "failed"
 
-        # Truncate result to keep session history compact by keeping the
-        # head and tail and dropping the middle — sub-agent output often
-        # starts with a preamble and ends with the actual outcome.
-        _MAX_ANNOUNCE_RESULT = 1000
-        if len(result) > _MAX_ANNOUNCE_RESULT:
-            half = _MAX_ANNOUNCE_RESULT // 2
-            result = result[:half] + "\n\n... (truncated) ...\n\n" + result[-half:]
+        output_path = _subagent_output_path(task_id)
+        saved = False
+        try:
+            output_path.write_text(result, encoding="utf-8")
+            saved = True
+        except OSError as exc:
+            logger.warning("Failed to persist subagent output to {}: {}", output_path, exc)
+
+        lines = result.splitlines()
+        if len(lines) <= _TAIL_LINES:
+            display = result
+        else:
+            tail = "\n".join(lines[-_TAIL_LINES:])
+            display = tail
+            if saved:
+                display += (
+                    f"\n\n... (last {_TAIL_LINES} of {len(lines)} lines,"
+                    f" full output saved to: {output_path})"
+                )
+            else:
+                display += f"\n\n... (last {_TAIL_LINES} of {len(lines)} lines)"
 
         announce_content = render_template(
             "agent/subagent_announce.md",
             label=label,
             status_text=status_text,
-            result=result,
+            result=display,
         )
 
         # Inject as system message to trigger main agent.
