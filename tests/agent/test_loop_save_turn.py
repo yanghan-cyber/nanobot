@@ -604,10 +604,9 @@ async def test_system_subagent_followup_is_persisted_before_prompt_assembly(tmp_
 
     non_system = [m for m in seen["initial_messages"] if m.get("role") != "system"]
     assert [m["content"] for m in non_system[:2]] == ["question", "working"]
-    assert non_system[2]["content"] == "subagent result"
-    assert non_system[2]["role"] == "assistant"
-    assert "Message Time:" in non_system[3]["content"]
-    assert non_system[3]["role"] == "user"
+    assert non_system[2]["content"].startswith("subagent result")
+    assert non_system[2]["role"] == "user"
+    assert "Message Time:" in non_system[2]["content"]
 
     loop.sessions.invalidate("cli:test")
     persisted = loop.sessions.get_or_create("cli:test")
@@ -619,16 +618,13 @@ async def test_system_subagent_followup_is_persisted_before_prompt_assembly(tmp_
         {"role": "user", "content": "question"},
         {"role": "assistant", "content": "working"},
         {
-            "role": "assistant",
+            "role": "user",
             "content": "subagent result",
             "injected_event": "subagent_result",
             "subagent_task_id": "sub-1",
         },
     ]
-    # Runtime context is persisted as a user message (drop_runtime=False in this fork)
-    assert persisted_relevant[3]["role"] == "user"
-    assert "Message Time:" in persisted_relevant[3]["content"]
-    assert persisted_relevant[-1] == {"role": "assistant", "content": "done"}
+    assert persisted_relevant[3] == {"role": "assistant", "content": "done"}
 
 
 @pytest.mark.asyncio
@@ -697,7 +693,7 @@ def test_prompt_merge_does_not_replace_standalone_subagent_history_entry(tmp_pat
 
     non_system = [m for m in projected if m.get("role") != "system"]
     assert len(non_system) == 2
-    assert "subagent result" in non_system[-1]["content"]
+    assert non_system[0]["content"] == "subagent result"
     assert session.messages[-1]["content"] == "subagent result"
     assert session.messages[-1]["injected_event"] == "subagent_result"
 

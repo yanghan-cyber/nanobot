@@ -660,6 +660,9 @@ class AgentLoop:
             retry_wait_callback=on_retry_wait,
             checkpoint_callback=_checkpoint,
             injection_callback=_drain_pending,
+            has_running_tasks=(
+                lambda: self.subagents.get_running_count_by_session(session.key) > 0
+            ) if session else None,
         ))
         self._last_usage = result.usage
         if result.stop_reason == "max_iterations":
@@ -1239,7 +1242,7 @@ class AgentLoop:
         ):
             return False
         session.add_message(
-            "assistant",
+            "user",
             msg.content,
             sender_id=msg.sender_id,
             injected_event="subagent_result",

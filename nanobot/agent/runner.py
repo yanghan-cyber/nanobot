@@ -40,6 +40,7 @@ _MAX_EMPTY_RETRIES = 2
 _MAX_LENGTH_RECOVERIES = 3
 _MAX_INJECTIONS_PER_TURN = 3
 _MAX_INJECTION_CYCLES = 5
+_MAX_SUMMARY_RETRIES = 3
 _SNIP_SAFETY_BUFFER = 1024
 _MICROCOMPACT_KEEP_RECENT = 10
 _MICROCOMPACT_MIN_CHARS = 500
@@ -77,6 +78,7 @@ class AgentRunSpec:
     retry_wait_callback: Any | None = None
     checkpoint_callback: Any | None = None
     injection_callback: Any | None = None
+    has_running_tasks: Callable[[], bool] | None = None
     llm_timeout_s: float | None = None
 
 
@@ -157,7 +159,14 @@ class AgentRunner:
         caller continues the iteration loop.  Otherwise return (False, cycles).
         """
         if injection_cycles >= _MAX_INJECTION_CYCLES:
-            return False, injection_cycles
+            if spec.has_running_tasks and spec.has_running_tasks():
+                logger.info(
+                    "Injection cycle limit reached ({}/{}) but tasks still running; resetting counter",
+                    injection_cycles, _MAX_INJECTION_CYCLES,
+                )
+                injection_cycles = 0
+            else:
+                return False, injection_cycles
         injections = await self._drain_injections(spec)
         if not injections:
             return False, injection_cycles
@@ -551,18 +560,37 @@ class AgentRunner:
                     max_iterations=spec.max_iterations,
                 )
             messages.append({"role": "user", "content": prompt_text})
-            try:
-                summary_kwargs = self._build_request_kwargs(
-                    spec, messages, tools=None,
+            for _attempt in range(1, _MAX_SUMMARY_RETRIES + 1):
+                try:
+                    summary_kwargs = self._build_request_kwargs(
+                        spec, messages, tools=None,
+                    )
+                    summary_response = await self.provider.chat_with_retry(**summary_kwargs)
+                    if summary_response.finish_reason != "error":
+                        raw_usage = self._usage_dict(summary_response.usage)
+                        self._accumulate_usage(usage, raw_usage)
+                        final_content = summary_response.content or prompt_text
+                        messages.append(build_assistant_message(final_content))
+                        break
+                    # chat_with_retry returned an error response (non-transient)
+                    err_detail = (summary_response.content or "unknown error")[:200]
+                    logger.warning(
+                        "Max-iterations summary call returned error on attempt {}/{}: {}",
+                        _attempt, _MAX_SUMMARY_RETRIES, err_detail,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Max-iterations summary call failed on attempt {}/{}: {}",
+                        _attempt, _MAX_SUMMARY_RETRIES, exc,
+                    )
+            else:
+                err_msg = (
+                    f"Reached max iterations ({spec.max_iterations}) and failed to"
+                    f" generate a summary after {_MAX_SUMMARY_RETRIES} attempts."
                 )
-                summary_response = await self.provider.chat_with_retry(**summary_kwargs)
-                raw_usage = self._usage_dict(summary_response.usage)
-                self._accumulate_usage(usage, raw_usage)
-                final_content = summary_response.content or prompt_text
+                logger.error(err_msg)
+                final_content = err_msg
                 messages.append(build_assistant_message(final_content))
-            except Exception:
-                logger.warning("Max-iterations summary call failed; using prompt as fallback")
-                final_content = prompt_text
             # Drain any remaining injections so they are appended to the
             # conversation history instead of being re-published as
             # independent inbound messages by _dispatch's finally block.
