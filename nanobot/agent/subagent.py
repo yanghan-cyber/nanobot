@@ -192,9 +192,19 @@ class SubagentManager:
                 ))
             if self.web_config.enable:
                 tools.register(
-                    WebSearchTool(config=self.web_config.search, proxy=self.web_config.proxy)
+                    WebSearchTool(
+                        config=self.web_config.search,
+                        proxy=self.web_config.proxy,
+                        user_agent=self.web_config.user_agent,
+                    )
                 )
-                tools.register(WebFetchTool(proxy=self.web_config.proxy))
+                tools.register(
+                    WebFetchTool(
+                        config=self.web_config.fetch,
+                        proxy=self.web_config.proxy,
+                        user_agent=self.web_config.user_agent,
+                    )
+                )
             skills_loader = SkillsLoader(
                 self.workspace,
                 disabled_skills=self.disabled_skills,

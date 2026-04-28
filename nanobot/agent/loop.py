@@ -208,6 +208,7 @@ class AgentLoop:
         timezone: str | None = None,
         session_ttl_minutes: int = 0,
         consolidation_ratio: float = 0.5,
+        max_messages: int = 120,
         hooks: list[AgentHook] | None = None,
         unified_session: bool = False,
         disabled_skills: list[str] | None = None,
@@ -265,6 +266,7 @@ class AgentLoop:
             disabled_skills=disabled_skills,
         )
         self._unified_session = unified_session
+        self._max_messages = max_messages if max_messages > 0 else 120
         self._running = False
         self._mcp_servers = mcp_servers or {}
         self._mcp_stacks: dict[str, AsyncExitStack] = {}
@@ -376,9 +378,19 @@ class AgentLoop:
             ))
         if self.web_config.enable:
             self.tools.register(
-                WebSearchTool(config=self.web_config.search, proxy=self.web_config.proxy)
+                WebSearchTool(
+                    config=self.web_config.search,
+                    proxy=self.web_config.proxy,
+                    user_agent=self.web_config.user_agent,
+                )
             )
-            self.tools.register(WebFetchTool(proxy=self.web_config.proxy))
+            self.tools.register(
+                WebFetchTool(
+                    config=self.web_config.fetch,
+                    proxy=self.web_config.proxy,
+                    user_agent=self.web_config.user_agent,
+                )
+            )
         self.tools.register(MessageTool(send_callback=self.bus.publish_outbound, workspace=self.workspace))
         self.tools.register(SpawnTool(manager=self.subagents))
         self.tools.register(LoadSkillTool(skills_loader=self.context.skills))
@@ -918,6 +930,7 @@ class AgentLoop:
                 msg.metadata, session_key=key,
             )
             history = session.get_history(
+                max_messages=self._max_messages,
                 max_tokens=self._replay_token_budget(),
             )
             current_role = "user"
@@ -1009,6 +1022,7 @@ class AgentLoop:
                 message_tool.start_turn()
 
         history = session.get_history(
+            max_messages=self._max_messages,
             max_tokens=self._replay_token_budget(),
         )
 
