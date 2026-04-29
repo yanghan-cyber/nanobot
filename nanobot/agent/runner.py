@@ -365,6 +365,8 @@ class AgentRunner:
                         spec, messages, None, injection_cycles,
                         phase="after tool error",
                     )
+                    if hook.wants_streaming():
+                        await hook.on_stream_end(context, resuming=should_continue)
                     if should_continue:
                         had_injections = True
                         continue
@@ -891,7 +893,6 @@ class AgentRunner:
 
     # Markers identifying tool results that represent a workspace / safety boundary rejection.
     _WORKSPACE_BLOCK_MARKERS: tuple[str, ...] = (
-        "blocked by safety guard",
         "outside the configured workspace",
         "outside allowed directory",
         "working_dir is outside",
