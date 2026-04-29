@@ -950,8 +950,30 @@ class AgentLoop:
                 current_role=current_role,
                 system_prompt=frozen_sp,
             )
+            async def _bus_progress(
+                content: str,
+                *,
+                tool_hint: bool = False,
+                tool_events: list[dict[str, Any]] | None = None,
+            ) -> None:
+                meta = dict(msg.metadata or {})
+                meta["_progress"] = True
+                meta["_tool_hint"] = tool_hint
+                if tool_events:
+                    meta["_tool_events"] = tool_events
+                await self.bus.publish_outbound(
+                    OutboundMessage(
+                        channel=channel,
+                        chat_id=chat_id,
+                        content=content,
+                        metadata=meta,
+                    )
+                )
+
             final_content, _, all_msgs, stop_reason, _ = await self._run_agent_loop(
-                messages, session=session, channel=channel, chat_id=chat_id,
+                messages, on_progress=on_progress or _bus_progress,
+                on_stream=on_stream, on_stream_end=on_stream_end,
+                session=session, channel=channel, chat_id=chat_id,
                 message_id=msg.metadata.get("message_id"),
                 metadata=msg.metadata,
                 session_key=key,
