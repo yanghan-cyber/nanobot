@@ -9,6 +9,7 @@ import threading
 import time
 import uuid
 from collections import OrderedDict
+from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -613,12 +614,11 @@ class FeishuChannel(BaseChannel):
         """Callback: store reaction_id after background add-reaction completes."""
         if task.cancelled():
             return
-        try:
+        # Failures already logged by _on_background_task_done.
+        with suppress(Exception):
             reaction_id = task.result()
             if reaction_id:
                 self._active_reactions.setdefault(chat_id, []).append((message_id, reaction_id))
-        except Exception:
-            pass  # already logged by _on_background_task_done
 
     @staticmethod
     def _stream_key(chat_id: str, metadata: dict[str, Any] | None = None) -> str:

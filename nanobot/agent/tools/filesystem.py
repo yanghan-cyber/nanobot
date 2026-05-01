@@ -2,19 +2,15 @@
 
 import difflib
 import mimetypes
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from nanobot.agent.tools import file_state
 from nanobot.agent.tools.base import Tool, tool_parameters
-from nanobot.agent.tools.schema import (
-    BooleanSchema,
-    IntegerSchema,
-    StringSchema,
-    tool_parameters_schema,
-)
+from nanobot.agent.tools.schema import BooleanSchema, IntegerSchema, StringSchema, tool_parameters_schema
+from nanobot.agent.tools.file_state import FileStates, _hash_file, current_file_states
 from nanobot.config.paths import get_media_dir
 from nanobot.utils.helpers import detect_image_mime
 
@@ -54,10 +50,22 @@ class _FsTool(Tool):
         workspace: Path | None = None,
         allowed_dir: Path | None = None,
         extra_allowed_dirs: list[Path] | None = None,
+        file_states: FileStates | None = None,
     ):
         self._workspace = workspace
         self._allowed_dir = allowed_dir
         self._extra_allowed_dirs = extra_allowed_dirs
+        # Explicit state is used by isolated runners like Dream/subagents.
+        # Main AgentLoop tools leave this unset and resolve state from the
+        # current async task, which keeps shared tool instances session-safe.
+        self._explicit_file_states = file_states
+        self._fallback_file_states = FileStates()
+
+    @property
+    def _file_states(self) -> FileStates:
+        if self._explicit_file_states is not None:
+            return self._explicit_file_states
+        return current_file_states(self._fallback_file_states)
 
     def _resolve(self, path: str) -> Path:
         return _resolve_path(path, self._workspace, self._allowed_dir, self._extra_allowed_dirs)
@@ -205,8 +213,27 @@ class ReadFileTool(_FsTool):
                     "Use a vision-capable skill or tool to analyze."
                 )
 
-            if file_state.is_unchanged(fp, offset=offset, limit=limit):
-                return f"[File unchanged since last read: {path}]"
+            # Read dedup: same path + offset + limit + unchanged mtime → stub
+            entry = self._file_states.get(fp)
+            try:
+                current_mtime = os.path.getmtime(fp)
+            except OSError:
+                current_mtime = 0.0
+            if entry and entry.can_dedup and entry.offset == offset and entry.limit == limit:
+                if current_mtime != entry.mtime:
+                    entry.can_dedup = False
+                    self._file_states.record_read(fp, offset=offset, limit=limit)
+                else:
+                    current_hash = _hash_file(str(fp))
+                    if current_hash == entry.content_hash:
+                        return f"[File unchanged since last read: {path}]"
+                    else:
+                        entry.can_dedup = False
+                        self._file_states.record_read(fp, offset=offset, limit=limit)
+            else:
+                self._file_states.record_read(fp, offset=offset, limit=limit)
+                if entry:
+                    entry.can_dedup = False
 
             try:
                 text_content = raw.decode("utf-8")
@@ -251,7 +278,7 @@ class ReadFileTool(_FsTool):
                 result += f"\n\n(Showing lines {offset}-{end} of {total}. Use offset={end + 1} to continue.)"
             else:
                 result += f"\n\n(End of file — {total} lines total)"
-            file_state.record_read(fp, offset=offset, limit=limit)
+            self._file_states.record_read(fp, offset=offset, limit=limit)
             return result
         except PermissionError as e:
             return f"Error: {e}"
@@ -367,7 +394,7 @@ class WriteFileTool(_FsTool):
             fp = self._resolve(path)
             fp.parent.mkdir(parents=True, exist_ok=True)
             fp.write_text(content, encoding="utf-8")
-            file_state.record_write(fp)
+            self._file_states.record_write(fp)
             return f"Successfully wrote {len(content)} characters to {fp}"
         except PermissionError as e:
             return f"Error: {e}"
@@ -719,7 +746,7 @@ class EditFileTool(_FsTool):
                 if old_text == "":
                     fp.parent.mkdir(parents=True, exist_ok=True)
                     fp.write_text(new_text, encoding="utf-8")
-                    file_state.record_write(fp)
+                    self._file_states.record_write(fp)
                     return f"Successfully created {fp}"
                 return self._file_not_found_msg(path, fp)
 
@@ -738,11 +765,11 @@ class EditFileTool(_FsTool):
                 if content.strip():
                     return f"Error: Cannot create file — {path} already exists and is not empty."
                 fp.write_text(new_text, encoding="utf-8")
-                file_state.record_write(fp)
+                self._file_states.record_write(fp)
                 return f"Successfully edited {fp}"
 
             # Read-before-edit check
-            warning = file_state.check_read(fp)
+            warning = self._file_states.check_read(fp)
 
             raw = fp.read_bytes()
             uses_crlf = b"\r\n" in raw
@@ -787,7 +814,7 @@ class EditFileTool(_FsTool):
                 new_content = new_content.replace("\n", "\r\n")
 
             fp.write_bytes(new_content.encode("utf-8"))
-            file_state.record_write(fp)
+            self._file_states.record_write(fp)
             msg = f"Successfully edited {fp}"
             if warning:
                 msg = f"{warning}\n{msg}"

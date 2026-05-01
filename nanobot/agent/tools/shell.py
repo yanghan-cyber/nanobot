@@ -12,6 +12,7 @@ import sys
 import time
 import uuid
 from collections import deque
+from contextlib import suppress
 from contextvars import ContextVar
 from datetime import datetime
 from pathlib import Path
@@ -634,9 +635,8 @@ class BashTool(Tool):
                     pass
         # reap
         try:
-            await asyncio.wait_for(process.wait(), timeout=5.0)
-        except asyncio.TimeoutError:
-            pass
+            with suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(process.wait(), timeout=5.0)
         finally:
             if not _IS_WINDOWS:
                 try:
