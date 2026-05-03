@@ -243,6 +243,8 @@ class BashToolConfig(Base):
     path_append: str = ""
     sandbox: str = ""  # sandbox backend: "" (none) or "bwrap"
     allowed_env_keys: list[str] = Field(default_factory=list)  # Env var names to pass through to subprocess (e.g. ["GOPATH", "JAVA_HOME"])
+    allow_patterns: list[str] = Field(default_factory=list)  # Regex patterns that bypass deny_patterns (e.g. [r"rm\s+-rf\s+/tmp/"])
+    deny_patterns: list[str] = Field(default_factory=list)  # Extra regex patterns to block (appended to built-in list)
     bg_ttl: str | int = "2h"  # TTL for completed bg task metadata (e.g. "120s", "120m", "2h")
     bg_max_entries: int = 128  # max completed bg task entries to keep
 

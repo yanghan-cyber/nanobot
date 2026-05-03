@@ -381,6 +381,8 @@ class AgentLoop:
                     sandbox=self.bash_config.sandbox,
                     path_append=self.bash_config.path_append,
                     allowed_env_keys=self.bash_config.allowed_env_keys,
+                    allow_patterns=self.bash_config.allow_patterns,
+                    deny_patterns=self.bash_config.deny_patterns,
                 )
             )
             self.tools.register(ShellBgTool(
