@@ -270,6 +270,16 @@ async def _monitor_process(bg_id: str) -> None:
 _IS_WINDOWS = sys.platform == "win32"
 
 
+# Policy note appended to recoverable workspace-boundary guard errors.
+_WORKSPACE_BOUNDARY_NOTE = (
+    "\n\nNote: this is a hard policy boundary, not a transient failure. "
+    "Do NOT retry with shell tricks (symlinks, base64 piping, alternative "
+    "tools, working_dir overrides). If the user genuinely needs this "
+    "resource, tell them you cannot reach it under the current "
+    "restrict_to_workspace policy and ask how to proceed."
+)
+
+
 @tool_parameters(
     tool_parameters_schema(
         purpose=StringSchema(
@@ -372,6 +382,19 @@ class BashTool(Tool):
     _MAX_TIMEOUT = 600
     _MAX_OUTPUT = 10_000
 
+    # Kernel device files safe as stdio redirect targets (#3599).
+    _BENIGN_DEVICE_PATHS: frozenset[str] = frozenset({
+        "/dev/null",
+        "/dev/zero",
+        "/dev/full",
+        "/dev/random",
+        "/dev/urandom",
+        "/dev/stdin",
+        "/dev/stdout",
+        "/dev/stderr",
+        "/dev/tty",
+    })
+
     @property
     def description(self) -> str:
         return (
@@ -428,9 +451,15 @@ class BashTool(Tool):
                 requested = Path(cwd).expanduser().resolve()
                 workspace_root = Path(self.working_dir).expanduser().resolve()
             except Exception:
-                return "Error: working_dir could not be resolved"
+                return (
+                    "Error: working_dir could not be resolved"
+                    + _WORKSPACE_BOUNDARY_NOTE
+                )
             if requested != workspace_root and workspace_root not in requested.parents:
-                return "Error: working_dir is outside the configured workspace"
+                return (
+                    "Error: working_dir is outside the configured workspace"
+                    + _WORKSPACE_BOUNDARY_NOTE
+                )
 
         guard_error = self._guard_command(command, cwd)
         if guard_error:
@@ -718,19 +747,31 @@ class BashTool(Tool):
         from nanobot.security.network import contains_internal_url
 
         if contains_internal_url(cmd):
+            # SSRF stays fatal in the runner, so keep this marker direct.
             return "Error: Command blocked by safety guard (internal/private URL detected)"
 
         if self.restrict_to_workspace:
             if "..\\" in cmd or "../" in cmd:
-                return "Error: Command blocked by safety guard (path traversal detected)"
+                return (
+                    "Error: Command blocked by safety guard (path traversal detected)"
+                    + _WORKSPACE_BOUNDARY_NOTE
+                )
 
             cwd_path = Path(cwd).resolve()
 
             for raw in self._extract_absolute_paths(cmd):
                 try:
                     expanded = os.path.expandvars(raw.strip())
+                    # Match against the un-resolved path first.  On Linux,
+                    # /dev/stderr is a symlink to /proc/self/fd/2 and
+                    # ``Path.resolve()`` would mask the device-file intent.
+                    if self._is_benign_device_path(expanded):
+                        continue
                     p = Path(expanded).expanduser().resolve()
                 except Exception:
+                    continue
+
+                if self._is_benign_device_path(str(p)):
                     continue
 
                 media_path = get_media_dir().resolve()
@@ -740,21 +781,27 @@ class BashTool(Tool):
                     and media_path not in p.parents
                     and p != media_path
                 ):
-                    return "Error: Command blocked by safety guard (path outside working dir)"
+                    return (
+                        "Error: Command blocked by safety guard (path outside working dir)"
+                        + _WORKSPACE_BOUNDARY_NOTE
+                    )
 
         return None
+
+    @classmethod
+    def _is_benign_device_path(cls, path: str) -> bool:
+        """Return True for kernel device files that should never be workspace-blocked."""
+        if path in cls._BENIGN_DEVICE_PATHS:
+            return True
+        return path.startswith("/dev/fd/")
 
     @staticmethod
     def _extract_absolute_paths(command: str) -> list[str]:
         # Windows: match drive-root paths like `C:\` as well as `C:\path\to\file`
         # NOTE: `*` is required so `C:\` (nothing after the slash) is still extracted.
         win_paths = re.findall(r"[A-Za-z]:\\[^\s\"'|><;]*", command)
-        posix_paths = re.findall(
-            r"(?:^|[\s|>'\"])(/[^\s\"'>;|<]+)", command
-        )  # POSIX: /absolute only
-        home_paths = re.findall(
-            r"(?:^|[\s|>'\"])(~[^\s\"'>;|<]*)", command
-        )  # POSIX/Windows home shortcut: ~
+        posix_paths = re.findall(r"(?:^|[\s|>'\"])(/[^\s\"'>;|<]+)", command) # POSIX: /absolute only
+        home_paths = re.findall(r"(?:^|[\s>'\"])(~[^\s\"'>;|<]*)", command) # POSIX/Windows home shortcut: ~
         return win_paths + posix_paths + home_paths
 
 

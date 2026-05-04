@@ -15,6 +15,13 @@ from nanobot.config.paths import get_media_dir
 from nanobot.utils.helpers import detect_image_mime
 
 
+_FS_WORKSPACE_BOUNDARY_NOTE = (
+    " (this is a hard policy boundary, not a transient failure; "
+    "do not retry with shell tricks or alternative tools, and ask "
+    "the user how to proceed if the resource is genuinely required)"
+)
+
+
 def _resolve_path(
     path: str,
     workspace: Path | None = None,
@@ -30,7 +37,10 @@ def _resolve_path(
         media_path = get_media_dir().resolve()
         all_dirs = [allowed_dir] + [media_path] + (extra_allowed_dirs or [])
         if not any(_is_under(resolved, d) for d in all_dirs):
-            raise PermissionError(f"Path {path} is outside allowed directory {allowed_dir}")
+            raise PermissionError(
+                f"Path {path} is outside allowed directory {allowed_dir}"
+                + _FS_WORKSPACE_BOUNDARY_NOTE
+            )
     return resolved
 
 
