@@ -8,6 +8,7 @@ import os
 from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any
 
 from loguru import logger
