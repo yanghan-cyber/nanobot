@@ -24,6 +24,7 @@ from nanobot.bus.queue import MessageBus
 from nanobot.config.paths import get_data_dir
 from nanobot.config.schema import AgentDefaults, BashToolConfig, WebToolsConfig
 from nanobot.providers.base import LLMProvider
+from nanobot.session.manager import SessionManager
 from nanobot.utils.helpers import ensure_dir
 from nanobot.utils.prompt_templates import render_template
 
@@ -93,6 +94,7 @@ class SubagentManager:
         restrict_to_workspace: bool = False,
         disabled_skills: list[str] | None = None,
         max_iterations: int | None = None,
+        session_manager: SessionManager | None = None,
     ):
         self.provider = provider
         self.workspace = workspace
@@ -103,6 +105,7 @@ class SubagentManager:
         self.bash_config = bash_config or BashToolConfig()
         self.restrict_to_workspace = restrict_to_workspace
         self.disabled_skills = set(disabled_skills or [])
+        self.sessions = session_manager
         self.max_iterations = (
             max_iterations
             if max_iterations is not None
@@ -141,7 +144,10 @@ class SubagentManager:
         self._task_statuses[task_id] = status
 
         bg_task = asyncio.create_task(
-            self._run_subagent(task_id, task, display_label, origin, status, origin_message_id)
+            self._run_subagent(
+                task_id, task, display_label, origin, status,
+                origin_message_id, session_key=session_key,
+            )
         )
         self._running_tasks[task_id] = bg_task
         if session_key:
@@ -168,6 +174,7 @@ class SubagentManager:
         origin: dict[str, str],
         status: SubagentStatus,
         origin_message_id: str | None = None,
+        session_key: str | None = None,
     ) -> None:
         """Execute the subagent task and announce the result."""
         logger.info("Subagent [{}] starting task: {}", task_id, label)
@@ -248,6 +255,46 @@ class SubagentManager:
             )
             status.phase = "done"
             status.stop_reason = result.stop_reason
+
+            # Persist full subagent conversation to SQLite
+            if self.sessions and result.messages:
+                from nanobot.session.db import generate_session_id
+                import json as _json
+                db = self.sessions._db
+                parent_db_id = None
+                if session_key:
+                    parent_session = self.sessions.get_or_create(session_key)
+                    parent_db_id = parent_session.db_id
+                subagent_db_id = generate_session_id()
+                db.create_session(
+                    subagent_db_id,
+                    session_key=f"subagent:{task_id}",
+                    source="subagent",
+                    model=self.model,
+                    parent_session_id=parent_db_id,
+                )
+                for msg in result.messages:
+                    role = msg.get("role", "unknown")
+                    content = msg.get("content")
+                    if isinstance(content, list):
+                        content = _json.dumps(content, ensure_ascii=False)
+                    db.append_message(
+                        subagent_db_id,
+                        role=role,
+                        content=content,
+                        tool_calls=msg.get("tool_calls"),
+                        tool_call_id=msg.get("tool_call_id"),
+                        tool_name=msg.get("name"),
+                        reasoning_content=msg.get("reasoning_content"),
+                    )
+                usage = result.usage or {}
+                db.update_token_counts(
+                    subagent_db_id,
+                    input_tokens=usage.get("prompt_tokens", 0),
+                    output_tokens=usage.get("completion_tokens", 0),
+                    cache_read_tokens=usage.get("cached_tokens", 0),
+                )
+                db.end_session(subagent_db_id, result.stop_reason or "completed")
 
             if result.stop_reason == "tool_error":
                 status.tool_events = list(result.tool_events)
