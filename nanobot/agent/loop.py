@@ -39,6 +39,7 @@ from nanobot.agent.tools.shell import BashTool, ShellBgTool
 from nanobot.agent.tools.skill import LoadSkillTool
 from nanobot.agent.tools.spawn import SpawnTool
 from nanobot.agent.tools.web import WebFetchTool, WebSearchTool
+from nanobot.agent.tools.session_search import SessionSearchTool
 from nanobot.bus.events import InboundMessage, OutboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.command import CommandContext, CommandRouter, register_builtin_commands
@@ -46,6 +47,7 @@ from nanobot.config.schema import AgentDefaults
 from nanobot.providers.base import LLMProvider
 from nanobot.providers.factory import ProviderSnapshot
 from nanobot.session.manager import Session, SessionManager
+from nanobot.session.title import auto_title
 from nanobot.utils.document import extract_documents
 from nanobot.utils.helpers import image_placeholder_text
 from nanobot.utils.helpers import truncate_text as truncate_text_fn
@@ -269,6 +271,7 @@ class AgentLoop:
             restrict_to_workspace=restrict_to_workspace,
             disabled_skills=disabled_skills,
             max_iterations=self.max_iterations,
+            session_manager=self.sessions,
         )
         self._unified_session = unified_session
         self._max_messages = max_messages if max_messages > 0 else 120
@@ -411,6 +414,11 @@ class AgentLoop:
             self.tools.register(
                 CronTool(self.cron_service, default_timezone=self.context.timezone or "UTC")
             )
+        self.tools.register(
+            SessionSearchTool(
+                db=self.sessions._db, provider=self.provider, model=self.model
+            )
+        )
 
     async def _connect_mcp(self) -> None:
         """Connect to configured MCP servers (one-time, lazy)."""
@@ -901,6 +909,25 @@ class AgentLoop:
                 logger.debug("MCP server '{}' cleanup error (can be ignored)", name)
         self._mcp_stacks.clear()
 
+    async def _auto_title(self, session: Session) -> None:
+        """Auto-generate a session title after first exchanges."""
+        if not session.db_id:
+            return
+        db = self.sessions._db
+        if db.get_session_title(session.db_id):
+            return
+        user_msgs = [m for m in session.messages if m.get("role") == "user"]
+        assistant_msgs = [m for m in session.messages if m.get("role") == "assistant"]
+        if not user_msgs or not assistant_msgs:
+            return
+        user_content = user_msgs[0].get("content", "")
+        assistant_content = assistant_msgs[0].get("content", "")
+        title = await auto_title(
+            self.provider, self.model, user_content, assistant_content
+        )
+        if title and session.db_id:
+            db.set_session_title(session.db_id, title)
+
     def _schedule_background(self, coro) -> None:
         """Schedule a coroutine as a tracked background task (drained on shutdown)."""
         task = asyncio.create_task(coro)
@@ -1183,6 +1210,19 @@ class AgentLoop:
         self._clear_runtime_checkpoint(session)
         self.sessions.save(session)
         self._schedule_background(self.consolidator.maybe_consolidate_by_tokens(session))
+
+        # Auto-title generation for new sessions
+        if (
+            session.db_id
+            and not self.sessions._db.get_session_title(session.db_id)
+        ):
+            user_msg_count = sum(
+                1
+                for m in session.messages[: session.last_db_flush_idx]
+                if m.get("role") == "user"
+            )
+            if 1 <= user_msg_count <= 2:
+                self._schedule_background(self._auto_title(session))
 
         # When follow-up messages were injected mid-turn, a later natural
         # language reply may address those follow-ups and should not be
