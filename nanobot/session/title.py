@@ -20,10 +20,15 @@ _MAX_TITLE_LEN = 80
 
 def clean_title(raw: str) -> str:
     """Sanitize a raw LLM title output."""
+    if not isinstance(raw, str):
+        return ""
     title = raw.strip().strip('"').strip("'").strip()
     if not title:
         return ""
-    while title.endswith((".", "!", "?")):
+    # Guard against runaway loop: endswith is always truthy for non-str types
+    for _ in range(20):  # safety limit: max 20 chars of trailing punctuation
+        if not title.endswith((".", "!", "?")):
+            break
         title = title[:-1].strip()
     if len(title) > _MAX_TITLE_LEN:
         title = title[:_MAX_TITLE_LEN - 3] + "..."

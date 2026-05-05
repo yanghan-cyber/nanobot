@@ -138,9 +138,17 @@ class SessionDB:
         self._conn = sqlite3.connect(str(self.path), check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=wal")
         self._conn.execute("PRAGMA foreign_keys=ON")
+        self._conn.execute("PRAGMA cache_size = -128")  # 128 KB, avoid per-connection bloat
         self._conn.row_factory = sqlite3.Row
         self._lock = threading.Lock()
         self._init_schema()
+
+    def close(self) -> None:
+        """Explicitly close the SQLite connection, freeing C-level resources."""
+        try:
+            self._conn.close()
+        except Exception:
+            pass
 
     def _init_schema(self) -> None:
         """Create or verify all schema objects."""
@@ -155,16 +163,16 @@ class SessionDB:
             )
             self._conn.commit()
 
-    def _execute_write(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:
+    def _execute_write(self, sql: str, params: tuple = ()) -> None:
         """Execute a write statement with retry on lock contention."""
         max_retries = 15
         for attempt in range(max_retries):
             try:
                 with self._lock:
                     self._conn.execute("BEGIN IMMEDIATE")
-                    cursor = self._conn.execute(sql, params)
+                    self._conn.execute(sql, params)
                     self._conn.commit()
-                    return cursor
+                    return
             except sqlite3.OperationalError as e:
                 self._conn.rollback()
                 error_str = str(e)
@@ -229,7 +237,15 @@ class SessionDB:
             )
 
     def end_session(self, session_id: str, end_reason: str) -> None:
-        """Mark a session as ended with the given reason."""
+        """Mark a session as ended with the given reason.
+
+        No-op when *session_id* does not exist.
+        """
+        row = self._conn.execute(
+            "SELECT id FROM sessions WHERE id = ?", (session_id,)
+        ).fetchone()
+        if row is None:
+            return
         self._execute_write(
             "UPDATE sessions SET ended_at = ?, end_reason = ? WHERE id = ?",
             (time.time(), end_reason, session_id),

@@ -258,8 +258,6 @@ class SubagentManager:
 
             # Persist full subagent conversation to SQLite
             if self.sessions and result.messages:
-                import json as _json
-
                 from nanobot.session.db import generate_session_id
                 db = self.sessions._db
                 parent_db_id = None
@@ -278,7 +276,7 @@ class SubagentManager:
                     role = msg.get("role", "unknown")
                     content = msg.get("content")
                     if isinstance(content, list):
-                        content = _json.dumps(content, ensure_ascii=False)
+                        content = json.dumps(content, ensure_ascii=False)
                     db.append_message(
                         subagent_db_id,
                         role=role,
