@@ -10,6 +10,7 @@ from contextlib import suppress
 from nanobot import __version__
 from nanobot.bus.events import OutboundMessage
 from nanobot.command.router import CommandContext, CommandRouter
+from nanobot.session.db import generate_session_id
 from nanobot.utils.helpers import build_status_content
 from nanobot.utils.restart import set_restart_notice_to_env
 
@@ -97,8 +98,17 @@ async def cmd_new(ctx: CommandContext) -> OutboundMessage:
     await loop._cancel_active_tasks(ctx.key)
     session = ctx.session or loop.sessions.get_or_create(ctx.key)
     snapshot = session.messages[session.last_consolidated:]
+    # Flush old session messages to SQLite, then end it
+    loop.sessions.save(session)
+    if session.db_id:
+        loop.sessions._db.end_session(session.db_id, "user_new")
+    # Clear and create new session
     session.clear()
+    session.db_id = generate_session_id()
+    session.last_db_flush_idx = 0
+    loop.sessions._db.create_session(session.db_id, session_key=ctx.key, source="agent")
     loop.invalidate_frozen_prompt(session.key)
+    # Save cleared state to JSONL, then invalidate cache
     loop.sessions.save(session)
     loop.sessions.invalidate(session.key)
     if snapshot:

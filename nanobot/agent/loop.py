@@ -1045,6 +1045,7 @@ class AgentLoop:
                     )
                 )
 
+            active_db_id = session.db_id
             final_content, _, all_msgs, stop_reason, _ = await self._run_agent_loop(
                 messages, on_progress=on_progress or _bus_progress,
                 on_stream=on_stream, on_stream_end=on_stream_end,
@@ -1058,9 +1059,9 @@ class AgentLoop:
             session.enforce_file_cap(on_archive=self.context.memory.raw_archive)
             self._clear_runtime_checkpoint(session)
             self.sessions.save(session)
-            if session.db_id:
+            if active_db_id:
                 self.sessions._db.update_token_counts(
-                    session.db_id,
+                    active_db_id,
                     input_tokens=self._last_usage.get("prompt_tokens", 0),
                     output_tokens=self._last_usage.get("completion_tokens", 0),
                 )
@@ -1209,6 +1210,7 @@ class AgentLoop:
             self.sessions.save(session)
             user_persisted_early = True
 
+        active_db_id = session.db_id
         final_content, _, all_msgs, stop_reason, had_injections = await self._run_agent_loop(
             initial_messages,
             on_progress=on_progress or _bus_progress,
@@ -1234,9 +1236,9 @@ class AgentLoop:
         self._clear_pending_user_turn(session)
         self._clear_runtime_checkpoint(session)
         self.sessions.save(session)
-        if session.db_id:
+        if active_db_id:
             self.sessions._db.update_token_counts(
-                session.db_id,
+                active_db_id,
                 input_tokens=self._last_usage.get("prompt_tokens", 0),
                 output_tokens=self._last_usage.get("completion_tokens", 0),
             )
