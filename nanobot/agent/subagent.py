@@ -12,12 +12,12 @@ from loguru import logger
 
 from nanobot.agent.hook import AgentHook, AgentHookContext
 from nanobot.agent.runner import AgentRunner, AgentRunSpec
-from nanobot.agent.skills import SkillsLoader, BUILTIN_SKILLS_DIR
+from nanobot.agent.skills import BUILTIN_SKILLS_DIR, SkillsLoader
 from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
-from nanobot.agent.tools.skill import LoadSkillTool
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.tools.search import GlobTool, GrepTool
 from nanobot.agent.tools.shell import BashTool, ShellBgTool
+from nanobot.agent.tools.skill import LoadSkillTool
 from nanobot.agent.tools.web import WebFetchTool, WebSearchTool
 from nanobot.bus.events import InboundMessage
 from nanobot.bus.queue import MessageBus
@@ -258,8 +258,9 @@ class SubagentManager:
 
             # Persist full subagent conversation to SQLite
             if self.sessions and result.messages:
-                from nanobot.session.db import generate_session_id
                 import json as _json
+
+                from nanobot.session.db import generate_session_id
                 db = self.sessions._db
                 parent_db_id = None
                 if session_key:

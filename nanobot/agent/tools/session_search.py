@@ -10,8 +10,8 @@ from typing import Any
 from loguru import logger
 
 from nanobot.agent.tools.base import Tool
-from nanobot.session.db import SessionDB
 from nanobot.providers.base import LLMProvider
+from nanobot.session.db import SessionDB
 
 _SCHEMA: dict[str, Any] = {
     "type": "object",
