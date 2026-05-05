@@ -637,19 +637,15 @@ last_db_flush_idx=last_db_flush_idx
 
 In `_repair()` (around line 338-388), add the same `db_id`/`last_db_flush_idx` parsing from metadata and pass to `Session()` constructor.
 
-- [ ] **Step 8: Update save() metadata_line + add SQLite flush**
+- [ ] **Step 8: Add SQLite flush BEFORE JSONL write, update metadata_line**
 
-In `save()` metadata_line dict (line 418-425), add:
+Flush must happen **before** building metadata_line so that `last_db_flush_idx` in JSONL matches the actual SQLite state.
 
-```python
-"db_id": session.db_id,
-"last_db_flush_idx": session.last_db_flush_idx,
-```
-
-After the existing `self._cache[session.key] = session` at line 450, add the SQLite flush block:
+In `save()`, before `metadata_line = {` (line 418), add the SQLite flush block:
 
 ```python
-# SQLite shadow flush — failure is non-fatal
+# SQLite shadow flush — failure is non-fatal; do it BEFORE JSONL write
+# so last_db_flush_idx in metadata is consistent with SQLite state.
 try:
     self._db.ensure_session(
         session.db_id, session_key=session.key, source="agent"
@@ -671,6 +667,13 @@ try:
     session.last_db_flush_idx = len(session.messages)
 except Exception:
     logger.warning("SQLite flush failed for session {}", session.key, exc_info=True)
+```
+
+Then in the `metadata_line` dict (line 418-425), add the two new fields:
+
+```python
+"db_id": session.db_id,
+"last_db_flush_idx": session.last_db_flush_idx,
 ```
 
 - [ ] **Step 9: Update _session_payload()**

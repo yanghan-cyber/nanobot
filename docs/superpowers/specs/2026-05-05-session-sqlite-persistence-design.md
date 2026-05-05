@@ -10,8 +10,8 @@ This spec adds a SQLite sidecar database as a **read-only shadow** of all sessio
 
 ```
 SessionManager.save()
-    ├── JSONL atomic write (unchanged)
-    └── SQLite incremental flush (new, failure = warning only)
+    ├── SQLite incremental flush (new, failure = warning only)  ← before JSONL so last_db_flush_idx aligns
+    └── JSONL atomic write (unchanged, metadata includes updated flush_idx)
 
 AgentLoop
     ├── registers SessionSearchTool (new)
@@ -179,7 +179,7 @@ last_db_flush_idx: int = 0         # messages already flushed to SQLite
 
 ### `save()` changes
 
-After the existing JSONL atomic write succeeds:
+Before the JSONL atomic write (so that `last_db_flush_idx` is aligned in the metadata line):
 
 ```python
 try:
