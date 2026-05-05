@@ -24,6 +24,7 @@ class AutoCompact:
         self.consolidator = consolidator
         self._ttl = session_ttl_minutes
         self._archiving: set[str] = set()
+        self._stale_keys: set[str] = set()
         self._summaries: dict[str, tuple[str, datetime]] = {}
 
     def _is_expired(self, ts: datetime | str | None,
@@ -66,7 +67,7 @@ class AutoCompact:
         now = datetime.now()
         for info in self.sessions.list_sessions():
             key = info.get("key", "")
-            if not key or key in self._archiving:
+            if not key or key in self._archiving or key in self._stale_keys:
                 continue
             if key in active_session_keys:
                 continue
@@ -79,9 +80,12 @@ class AutoCompact:
             self.sessions.invalidate(key)
             session = self.sessions.get_or_create(key)
             archive_msgs, kept_msgs = self._split_unconsolidated(session)
-            if not archive_msgs and not kept_msgs:
+            if not archive_msgs:
+                # Nothing to archive — skip split entirely, just refresh
+                # timestamp so the session won't be immediately re-processed.
                 session.updated_at = datetime.now()
                 self.sessions.save(session)
+                self._stale_keys.add(key)
                 return
 
             last_active = session.updated_at
@@ -127,6 +131,8 @@ class AutoCompact:
             self._archiving.discard(key)
 
     def prepare_session(self, session: Session, key: str) -> tuple[Session, str | None]:
+        # Session is being actively used — clear stale marker.
+        self._stale_keys.discard(key)
         if key in self._archiving or self._is_expired(session.updated_at):
             logger.info("Auto-compact: reloading session {} (archiving={})", key, key in self._archiving)
             session = self.sessions.get_or_create(key)

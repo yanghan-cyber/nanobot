@@ -47,7 +47,6 @@ from nanobot.config.schema import AgentDefaults
 from nanobot.providers.base import LLMProvider
 from nanobot.providers.factory import ProviderSnapshot
 from nanobot.session.manager import Session, SessionManager
-from nanobot.session.title import auto_title
 from nanobot.utils.document import extract_documents
 from nanobot.utils.helpers import image_placeholder_text
 from nanobot.utils.helpers import truncate_text as truncate_text_fn
@@ -909,24 +908,44 @@ class AgentLoop:
                 logger.debug("MCP server '{}' cleanup error (can be ignored)", name)
         self._mcp_stacks.clear()
 
-    async def _auto_title(self, session: Session) -> None:
-        """Auto-generate a session title after first exchanges."""
+    async def _auto_title(self, session: Session, system_prompt: str) -> None:
+        """Auto-generate a session title by reusing conversation context for cache hits."""
         if not session.db_id:
             return
         db = self.sessions._db
         if db.get_session_title(session.db_id):
             return
-        user_msgs = [m for m in session.messages if m.get("role") == "user"]
-        assistant_msgs = [m for m in session.messages if m.get("role") == "assistant"]
-        if not user_msgs or not assistant_msgs:
-            return
-        user_content = user_msgs[0].get("content", "")
-        assistant_content = assistant_msgs[0].get("content", "")
-        title = await auto_title(
-            self.provider, self.model, user_content, assistant_content
+
+        history = session.get_history(
+            max_messages=self._max_messages,
+            max_tokens=self._replay_token_budget(),
         )
-        if title and session.db_id:
-            db.set_session_title(session.db_id, title)
+        if not history:
+            return
+
+        messages = [{"role": "system", "content": system_prompt}]
+        messages.extend(history)
+        messages.append({
+            "role": "user",
+            "content": (
+                "Based on the conversation above, generate a short descriptive "
+                "title (3-7 words). Return ONLY the title, no quotes, "
+                "no explanation, no punctuation at the end."
+            ),
+        })
+
+        try:
+            response = await self.provider.chat_with_retry(
+                model=self.model,
+                messages=messages,
+            )
+            if response and response.content and session.db_id:
+                from nanobot.session.title import clean_title
+                title = clean_title(response.content)
+                if title:
+                    db.set_session_title(session.db_id, title)
+        except Exception:
+            logger.debug("Auto-title generation failed", exc_info=True)
 
     def _schedule_background(self, coro) -> None:
         """Schedule a coroutine as a tracked background task (drained on shutdown)."""
@@ -1222,7 +1241,8 @@ class AgentLoop:
                 if m.get("role") == "user"
             )
             if 1 <= user_msg_count <= 2:
-                self._schedule_background(self._auto_title(session))
+                sp = self._get_frozen_prompt(key, channel=msg.channel)
+                self._schedule_background(self._auto_title(session, sp))
 
         # When follow-up messages were injected mid-turn, a later natural
         # language reply may address those follow-ups and should not be
