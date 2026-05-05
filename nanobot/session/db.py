@@ -130,6 +130,7 @@ class SessionDB:
         "input_tokens",
         "output_tokens",
         "cache_read_tokens",
+        "ended_at",
     })
 
     def __init__(self, path: Path) -> None:

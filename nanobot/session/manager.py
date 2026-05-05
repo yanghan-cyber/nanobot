@@ -3,6 +3,7 @@
 import json
 import os
 import shutil
+import time
 from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -453,6 +454,11 @@ class SessionManager:
                         reasoning_content=msg.get("reasoning_content"),
                     )
                 session.last_db_flush_idx = len(session.messages)
+                self._db.update_session(
+                    session.db_id,
+                    message_count=len(session.messages),
+                    ended_at=time.time(),
+                )
             except Exception:
                 logger.warning("SQLite flush failed for session {}", session.key, exc_info=True)
 

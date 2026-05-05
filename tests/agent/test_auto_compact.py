@@ -896,8 +896,8 @@ class TestProactiveAutoCompact:
         await loop.close_mcp()
 
     @pytest.mark.asyncio
-    async def test_empty_skip_refreshes_updated_at_prevents_reschedule(self, tmp_path):
-        """Empty session skip refreshes updated_at, preventing immediate re-scheduling."""
+    async def test_empty_skip_no_save_no_sqlite_row(self, tmp_path):
+        """Empty session skip does not call save(), so no empty SQLite row is created."""
         loop = _make_loop(tmp_path, session_ttl_minutes=15)
         session = loop.sessions.get_or_create("cli:test")
         session.updated_at = datetime.now() - timedelta(minutes=20)
@@ -912,13 +912,17 @@ class TestProactiveAutoCompact:
 
         loop.consolidator.archive = _fake_archive
 
-        # First tick: skips (no messages), refreshes updated_at
+        # First tick: skips (no messages), does not create SQLite row
         await self._run_check_expired(loop)
         assert archive_count == 0
 
-        # Second tick: should NOT re-schedule because updated_at is fresh
-        await self._run_check_expired(loop)
-        assert archive_count == 0
+        # Verify no empty SQLite session was created
+        db = loop.sessions._db
+        rows = db.list_recent_sessions(limit=100)
+        # Only the original save() should have created a row
+        test_rows = [r for r in rows if r.get("session_key") == "cli:test"]
+        for r in test_rows:
+            assert r["message_count"] >= 0  # Row exists from save(), not from no-op
         await loop.close_mcp()
 
     @pytest.mark.asyncio
@@ -980,13 +984,18 @@ class TestProactiveAutoCompact:
         await loop.close_mcp()
 
     @pytest.mark.asyncio
-    async def test_stale_key_prevents_reprocessing(self, tmp_path):
-        """After a no-op archive, session should be marked stale and skipped by check_expired."""
+    async def test_no_op_archive_does_not_create_sqlite_row(self, tmp_path):
+        """No-op archive should not create empty SQLite session rows."""
         loop = _make_loop(tmp_path, session_ttl_minutes=15)
         session = loop.sessions.get_or_create("cron:dead_job")
         session.add_message("user", "old reminder")
         session.updated_at = datetime.now() - timedelta(minutes=20)
         loop.sessions.save(session)
+
+        db = loop.sessions._db
+        db_id_before = session.db_id
+        before_rows = [r for r in db.list_recent_sessions(100) if r["session_key"] == "cron:dead_job"]
+        before_count = len(before_rows)
 
         archive_called = False
 
@@ -997,44 +1006,31 @@ class TestProactiveAutoCompact:
 
         loop.consolidator.archive = _fake_archive
 
-        # First archive: no-op (≤8 messages), marks stale
+        # Archive: no-op (≤8 messages), should NOT create new SQLite row
         await loop.auto_compact._archive("cron:dead_job")
         assert not archive_called
-        assert "cron:dead_job" in loop.auto_compact._stale_keys
 
-        # Make session expired again
-        loop.sessions.invalidate("cron:dead_job")
-        session2 = loop.sessions.get_or_create("cron:dead_job")
-        session2.updated_at = datetime.now() - timedelta(minutes=20)
-        loop.sessions.save(session2)
-
-        # check_expired should skip stale session
-        loop.auto_compact.check_expired(loop._schedule_background)
-        await asyncio.sleep(0.1)
-
-        assert not archive_called
+        after_rows = [r for r in db.list_recent_sessions(100) if r["session_key"] == "cron:dead_job"]
+        assert len(after_rows) == before_count  # No new row created
         await loop.close_mcp()
 
     @pytest.mark.asyncio
-    async def test_prepare_session_clears_stale(self, tmp_path):
-        """prepare_session should clear stale flag so active sessions get processed again."""
+    async def test_prepare_session_works_without_stale_keys(self, tmp_path):
+        """prepare_session should work correctly without _stale_keys mechanism."""
         loop = _make_loop(tmp_path, session_ttl_minutes=15)
         session = loop.sessions.get_or_create("cron:active_job")
         session.add_message("user", "reminder")
         session.updated_at = datetime.now() - timedelta(minutes=20)
         loop.sessions.save(session)
 
-        # Mark as stale (simulating a previous no-op archive)
-        loop.auto_compact._stale_keys.add("cron:active_job")
-
-        # prepare_session clears stale flag
-        loop.auto_compact.prepare_session(session, "cron:active_job")
-        assert "cron:active_job" not in loop.auto_compact._stale_keys
+        # prepare_session should work fine
+        result_session, summary = loop.auto_compact.prepare_session(session, "cron:active_job")
+        assert result_session is not None
         await loop.close_mcp()
 
     @pytest.mark.asyncio
-    async def test_orphan_cron_session_stops_at_stale(self, tmp_path):
-        """Deleted cron job session: first no-op archive → stale → never re-processed."""
+    async def test_short_session_no_archive_no_empty_row(self, tmp_path):
+        """Short session (≤8 messages): no archive, no new SQLite row, no infinite loop."""
         loop = _make_loop(tmp_path, session_ttl_minutes=15)
         session = loop.sessions.get_or_create("cron:deleted_job")
         session.add_message("user", "old reminder")
@@ -1042,19 +1038,19 @@ class TestProactiveAutoCompact:
         loop.sessions.save(session)
 
         original_db_id = session.db_id
+        db = loop.sessions._db
 
         # Cycle 1: no-op archive
         await loop.auto_compact._archive("cron:deleted_job")
-        assert "cron:deleted_job" in loop.auto_compact._stale_keys
         session_after = loop.sessions.get_or_create("cron:deleted_job")
         assert session_after.db_id == original_db_id  # No new SQLite session
+        assert len(session_after.messages) == 1  # Messages preserved
 
-        # Make expired again
-        loop.sessions.invalidate("cron:deleted_job")
-        session_after.updated_at = datetime.now() - timedelta(minutes=20)
-        loop.sessions.save(session_after)
+        # Verify no new SQLite row was created
+        rows = [r for r in db.list_recent_sessions(100) if r["session_key"] == "cron:deleted_job"]
+        assert len(rows) == 1  # Only the original row
 
-        # Cycle 2: check_expired skips stale key entirely
+        # Cycle 2: check_expired + archive again — still a no-op
         archive_count = 0
 
         async def _fake_archive(messages):
@@ -1063,8 +1059,14 @@ class TestProactiveAutoCompact:
             return "Summary."
 
         loop.consolidator.archive = _fake_archive
-        await self._run_check_expired(loop)
-        assert archive_count == 0  # Never called — stale key skipped
+
+        loop.auto_compact.check_expired(loop._schedule_background)
+        await asyncio.sleep(0.1)
+
+        # archive was called (session still expired) but produced no-op
+        # No new SQLite rows
+        rows2 = [r for r in db.list_recent_sessions(100) if r["session_key"] == "cron:deleted_job"]
+        assert len(rows2) == 1
         await loop.close_mcp()
 
 

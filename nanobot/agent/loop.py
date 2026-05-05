@@ -1058,6 +1058,12 @@ class AgentLoop:
             session.enforce_file_cap(on_archive=self.context.memory.raw_archive)
             self._clear_runtime_checkpoint(session)
             self.sessions.save(session)
+            if session.db_id:
+                self.sessions._db.update_token_counts(
+                    session.db_id,
+                    input_tokens=self._last_usage.get("prompt_tokens", 0),
+                    output_tokens=self._last_usage.get("completion_tokens", 0),
+                )
             self._schedule_background(self.consolidator.maybe_consolidate_by_tokens(session))
             options = ask_user_options_from_messages(all_msgs) if stop_reason == "ask_user" else []
             content, buttons = ask_user_outbound(
@@ -1228,6 +1234,12 @@ class AgentLoop:
         self._clear_pending_user_turn(session)
         self._clear_runtime_checkpoint(session)
         self.sessions.save(session)
+        if session.db_id:
+            self.sessions._db.update_token_counts(
+                session.db_id,
+                input_tokens=self._last_usage.get("prompt_tokens", 0),
+                output_tokens=self._last_usage.get("completion_tokens", 0),
+            )
         self._schedule_background(self.consolidator.maybe_consolidate_by_tokens(session))
 
         # Auto-title generation for new sessions
