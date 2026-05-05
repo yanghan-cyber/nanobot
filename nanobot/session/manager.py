@@ -251,7 +251,7 @@ class SessionManager:
         self.sessions_dir = ensure_dir(self.workspace / "sessions")
         self.legacy_sessions_dir = get_legacy_sessions_dir()
         self._cache: dict[str, Session] = {}
-        self._db = SessionDB(db_path or self.workspace / "state.db")
+        self._db = SessionDB(db_path or self.workspace / "session" / "db" / "state.db")
 
     @staticmethod
     def safe_key(key: str) -> str:

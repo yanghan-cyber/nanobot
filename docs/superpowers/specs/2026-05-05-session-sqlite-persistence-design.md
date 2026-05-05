@@ -169,7 +169,7 @@ last_db_flush_idx: int = 0         # messages already flushed to SQLite
 ### SessionManager constructor
 
 - New parameter: `db_path: Path | None = None`
-- Default: `Path.home() / ".nanobot" / "state.db"`
+- Default: `self.workspace / "session" / "db" / "state.db"` (per-workspace isolation)
 - Creates `self._db = SessionDB(db_path)`
 
 ### `get_or_create()` changes
