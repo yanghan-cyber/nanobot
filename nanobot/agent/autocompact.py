@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Callable, Coroutine
 
 from loguru import logger
+from nanobot.session.db import generate_session_id
 from nanobot.session.manager import Session, SessionManager
 
 if TYPE_CHECKING:
@@ -91,6 +92,24 @@ class AutoCompact:
                 session.metadata["_last_summary"] = {"text": summary, "last_active": last_active.isoformat()}
             session.messages = kept_msgs
             session.last_consolidated = 0
+            # Session split: end old SQLite session, create new one with lineage
+            if session.db_id:
+                db = self.sessions._db
+                db.end_session(session.db_id, "compression")
+                old_db_id = session.db_id
+                session.db_id = generate_session_id()
+                session.last_db_flush_idx = 0
+                db.create_session(
+                    session.db_id,
+                    session_key=key,
+                    source="compression",
+                    parent_session_id=old_db_id,
+                )
+                old_title = db.get_session_title(old_db_id)
+                if old_title:
+                    db.set_session_title(
+                        session.db_id, db.get_next_title_in_lineage(old_title)
+                    )
             session.updated_at = datetime.now()
             self.sessions.save(session)
             if archive_msgs:
