@@ -112,3 +112,85 @@ class TestSessionCRUD:
         db.update_session("sess_001", bogus_field="oops")
         row = db.get_session("sess_001")
         assert row["title"] is None
+
+
+class TestMessageCRUD:
+    def test_append_message(self, tmp_path: Path) -> None:
+        db = SessionDB(tmp_path / "state.db")
+        db.create_session("sess_001", session_key="cli:direct", source="agent")
+        db.append_message("sess_001", role="user", content="Hello")
+        db.append_message("sess_001", role="assistant", content="Hi there!")
+        msgs = db.get_messages("sess_001")
+        assert len(msgs) == 2
+        assert msgs[0]["role"] == "user"
+        assert msgs[0]["content"] == "Hello"
+        assert msgs[1]["role"] == "assistant"
+
+    def test_append_message_with_tool_calls(self, tmp_path: Path) -> None:
+        db = SessionDB(tmp_path / "state.db")
+        db.create_session("sess_001", session_key="cli:direct", source="agent")
+        db.append_message(
+            "sess_001", role="assistant", content="",
+            tool_calls=[{"name": "bash", "arguments": '{"command": "ls"}'}],
+        )
+        msgs = db.get_messages("sess_001")
+        assert "bash" in msgs[0]["tool_calls"]
+
+    def test_get_messages_empty(self, tmp_path: Path) -> None:
+        db = SessionDB(tmp_path / "state.db")
+        db.create_session("sess_001", session_key="cli:direct", source="agent")
+        assert db.get_messages("sess_001") == []
+
+    def test_message_count_updated(self, tmp_path: Path) -> None:
+        db = SessionDB(tmp_path / "state.db")
+        db.create_session("sess_001", session_key="cli:direct", source="agent")
+        db.append_message("sess_001", role="user", content="Hello")
+        db.append_message("sess_001", role="assistant", content="Hi")
+        row = db.get_session("sess_001")
+        assert row["message_count"] == 2
+
+
+class TestTitleManagement:
+    def test_set_and_get_title(self, tmp_path: Path) -> None:
+        db = SessionDB(tmp_path / "state.db")
+        db.create_session("sess_001", session_key="cli:direct", source="agent")
+        db.set_session_title("sess_001", "Debug API")
+        assert db.get_session_title("sess_001") == "Debug API"
+
+    def test_get_title_returns_none_for_missing(self, tmp_path: Path) -> None:
+        db = SessionDB(tmp_path / "state.db")
+        assert db.get_session_title("nonexistent") is None
+
+    def test_next_title_in_lineage_first(self) -> None:
+        assert SessionDB.get_next_title_in_lineage("Debug API") == "Debug API #2"
+
+    def test_next_title_in_lineage_increments(self) -> None:
+        assert SessionDB.get_next_title_in_lineage("Debug API #2") == "Debug API #3"
+
+
+class TestTokenCounts:
+    def test_update_token_counts_additive(self, tmp_path: Path) -> None:
+        db = SessionDB(tmp_path / "state.db")
+        db.create_session("sess_001", session_key="cli:direct", source="agent")
+        db.update_token_counts("sess_001", input_tokens=100, output_tokens=50, cache_read_tokens=20)
+        db.update_token_counts("sess_001", input_tokens=30, output_tokens=10, cache_read_tokens=5)
+        row = db.get_session("sess_001")
+        assert row["input_tokens"] == 130
+        assert row["output_tokens"] == 60
+        assert row["cache_read_tokens"] == 25
+
+
+class TestListRecentSessions:
+    def test_list_recent_sessions(self, tmp_path: Path) -> None:
+        db = SessionDB(tmp_path / "state.db")
+        db.create_session("s1", session_key="cli:direct", source="agent", model="gpt-4")
+        db.append_message("s1", role="user", content="Hi")
+        db.update_session("s1", title="Test Chat")
+        sessions = db.list_recent_sessions(limit=5)
+        assert len(sessions) >= 1
+        assert sessions[0]["id"] == "s1"
+        assert sessions[0]["title"] == "Test Chat"
+
+    def test_list_recent_empty(self, tmp_path: Path) -> None:
+        db = SessionDB(tmp_path / "state.db")
+        assert db.list_recent_sessions() == []

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import random
+import re
 import sqlite3
 import threading
 import time
@@ -261,3 +263,125 @@ class SessionDB:
         if row is None:
             return None
         return dict(row)
+
+    def append_message(
+        self,
+        session_id: str,
+        *,
+        role: str,
+        content: str | None = None,
+        tool_calls: list[dict] | None = None,
+        tool_call_id: str | None = None,
+        tool_name: str | None = None,
+        token_count: int | None = None,
+        finish_reason: str | None = None,
+        reasoning_content: str | None = None,
+    ) -> None:
+        """Append a message to a session and increment its message_count atomically."""
+        if tool_calls is not None:
+            tool_calls = json.dumps(tool_calls)
+        max_retries = 15
+        for attempt in range(max_retries):
+            try:
+                with self._lock:
+                    self._conn.execute("BEGIN IMMEDIATE")
+                    self._conn.execute(
+                        "INSERT INTO messages (session_id, role, content, tool_calls, "
+                        "tool_call_id, tool_name, token_count, finish_reason, "
+                        "reasoning_content, created_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            session_id, role, content, tool_calls,
+                            tool_call_id, tool_name, token_count,
+                            finish_reason, reasoning_content, time.time(),
+                        ),
+                    )
+                    self._conn.execute(
+                        "UPDATE sessions SET message_count = message_count + 1 WHERE id = ?",
+                        (session_id,),
+                    )
+                    self._conn.commit()
+                    return
+            except sqlite3.OperationalError as e:
+                self._conn.rollback()
+                error_str = str(e)
+                if "locked" not in error_str and "busy" not in error_str:
+                    raise
+                if attempt < max_retries - 1:
+                    jitter = random.uniform(0.02, 0.15)
+                    logger.warning(
+                        "Database locked (attempt {}/{}), retrying in {:.0f}ms: {}",
+                        attempt + 1,
+                        max_retries,
+                        jitter * 1000,
+                        e,
+                    )
+                    time.sleep(jitter)
+                else:
+                    logger.error(
+                        "Database locked after {} attempts: {}",
+                        max_retries,
+                        e,
+                    )
+                    raise
+
+    def get_messages(self, session_id: str) -> list[dict]:
+        """Retrieve all messages for a session, ordered by creation time."""
+        cursor = self._conn.execute(
+            "SELECT * FROM messages WHERE session_id = ? ORDER BY created_at",
+            (session_id,),
+        )
+        rows = cursor.fetchall()
+        return [dict(row) for row in rows]
+
+    def set_session_title(self, session_id: str, title: str) -> None:
+        """Set the title of a session."""
+        self.update_session(session_id, title=title)
+
+    def get_session_title(self, session_id: str) -> str | None:
+        """Get the title of a session, or None if not found."""
+        cursor = self._conn.execute(
+            "SELECT title FROM sessions WHERE id = ?",
+            (session_id,),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            return None
+        return row["title"]
+
+    @staticmethod
+    def get_next_title_in_lineage(title: str) -> str:
+        """Increment a session title lineage, e.g. 'Foo' -> 'Foo #2', 'Foo #2' -> 'Foo #3'."""
+        m = re.fullmatch(r"^(.*) #(\d+)$", title)
+        if m:
+            base = m.group(1)
+            num = int(m.group(2)) + 1
+            return f"{base} #{num}"
+        return f"{title} #2"
+
+    def update_token_counts(
+        self,
+        session_id: str,
+        *,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        cache_read_tokens: int = 0,
+    ) -> None:
+        """Additively update token counts for a session."""
+        self._execute_write(
+            "UPDATE sessions SET input_tokens = input_tokens + ?, "
+            "output_tokens = output_tokens + ?, "
+            "cache_read_tokens = cache_read_tokens + ? "
+            "WHERE id = ?",
+            (input_tokens, output_tokens, cache_read_tokens, session_id),
+        )
+
+    def list_recent_sessions(self, limit: int = 10) -> list[dict]:
+        """List the most recent sessions, ordered by started_at descending."""
+        cursor = self._conn.execute(
+            "SELECT id, session_key, source, model, title, started_at, ended_at, "
+            "message_count, input_tokens, output_tokens "
+            "FROM sessions ORDER BY started_at DESC LIMIT ?",
+            (limit,),
+        )
+        return [dict(row) for row in cursor.fetchall()]
