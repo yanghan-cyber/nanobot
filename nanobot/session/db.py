@@ -99,6 +99,16 @@ CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id);
 """
 
 
+def _contains_cjk(text: str) -> bool:
+    """Return True if *text* contains any CJK characters."""
+    return any('一' <= c <= '鿿' or '㐀' <= c <= '䶿' for c in text)
+
+
+def _count_cjk(text: str) -> int:
+    """Count the number of CJK characters in *text*."""
+    return sum(1 for c in text if '一' <= c <= '鿿' or '㐀' <= c <= '䶿')
+
+
 def generate_session_id() -> str:
     """Generate a unique session ID in YYYYMMDD_HHMMSS_<6hex> format."""
     now = datetime.now()
@@ -384,4 +394,92 @@ class SessionDB:
             "FROM sessions ORDER BY started_at DESC LIMIT ?",
             (limit,),
         )
+        return [dict(row) for row in cursor.fetchall()]
+
+    @staticmethod
+    def _sanitize_fts5_query(query: str) -> str:
+        """Clean *query* so it is safe for FTS5 MATCH.
+
+        - Preserve quoted phrases as-is.
+        - Strip characters that are special to FTS5 but not useful for
+          ad-hoc user queries.
+        """
+        parts: list[str] = []
+        for token in re.split(r'(\"[^\"]*\")', query):
+            if not token:
+                continue
+            if token.startswith('"') and token.endswith('"'):
+                parts.append(token)
+            else:
+                cleaned = re.sub(r'[^\w\s]+', ' ', token)
+                cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+                if cleaned:
+                    parts.append(cleaned)
+        return ' '.join(parts) if parts else query
+
+    def search_messages(
+        self,
+        query: str,
+        *,
+        role_filter: list[str] | None = None,
+        exclude_sources: list[str] | None = None,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """Search messages using FTS5, with CJK trigram and LIKE fallback."""
+        sanitized = self._sanitize_fts5_query(query)
+        if not sanitized.strip():
+            return []
+
+        if _contains_cjk(query):
+            cjk_count = _count_cjk(query)
+            if cjk_count >= 3:
+                # Use trigram FTS5 for CJK queries with >= 3 chars
+                sql = (
+                    "SELECT s.id as session_id, s.source, m.role, m.content, m.created_at"
+                    " FROM messages_fts_trigram fts"
+                    " JOIN messages m ON m.id = fts.rowid"
+                    " JOIN sessions s ON s.id = m.session_id"
+                    " WHERE messages_fts_trigram MATCH ?"
+                )
+                params: list[Any] = [sanitized]
+            else:
+                # LIKE fallback for short CJK queries (1-2 chars)
+                like_term = f"%{query}%"
+                sql = (
+                    "SELECT s.id as session_id, s.source, m.role, m.content, m.created_at"
+                    " FROM messages m"
+                    " JOIN sessions s ON s.id = m.session_id"
+                    " WHERE (m.content LIKE ? OR m.tool_name LIKE ? OR m.tool_calls LIKE ?)"
+                )
+                params = [like_term, like_term, like_term]
+        else:
+            # Default FTS5 for non-CJK queries
+            sql = (
+                "SELECT s.id as session_id, s.source, m.role, m.content, m.created_at"
+                " FROM messages_fts fts"
+                " JOIN messages m ON m.id = fts.rowid"
+                " JOIN sessions s ON s.id = m.session_id"
+                " WHERE messages_fts MATCH ?"
+            )
+            params = [sanitized]
+
+        if role_filter:
+            placeholders = ','.join('?' * len(role_filter))
+            sql += f" AND m.role IN ({placeholders})"
+            params.extend(role_filter)
+
+        if exclude_sources:
+            placeholders = ','.join('?' * len(exclude_sources))
+            sql += f" AND s.source NOT IN ({placeholders})"
+            params.extend(exclude_sources)
+
+        if _contains_cjk(query) and _count_cjk(query) < 3:
+            sql += " ORDER BY m.created_at DESC"
+        else:
+            sql += " ORDER BY rank"
+
+        sql += " LIMIT ?"
+        params.append(limit)
+
+        cursor = self._conn.execute(sql, tuple(params))
         return [dict(row) for row in cursor.fetchall()]

@@ -194,3 +194,78 @@ class TestListRecentSessions:
     def test_list_recent_empty(self, tmp_path: Path) -> None:
         db = SessionDB(tmp_path / "state.db")
         assert db.list_recent_sessions() == []
+
+
+class TestFTS5Search:
+    def test_search_finds_matching_content(self, tmp_path: Path) -> None:
+        db = SessionDB(tmp_path / "state.db")
+        db.create_session("sess_001", session_key="cli:direct", source="agent")
+        db.append_message("sess_001", role="user", content="How to deploy docker containers?")
+        db.append_message("sess_001", role="assistant", content="Use docker-compose up")
+        results = db.search_messages("docker")
+        assert len(results) > 0
+
+    def test_search_returns_session_info(self, tmp_path: Path) -> None:
+        db = SessionDB(tmp_path / "state.db")
+        db.create_session("sess_001", session_key="cli:direct", source="agent")
+        db.append_message("sess_001", role="user", content="Python testing with pytest")
+        results = db.search_messages("pytest")
+        assert results[0]["session_id"] == "sess_001"
+
+    def test_search_no_match_returns_empty(self, tmp_path: Path) -> None:
+        db = SessionDB(tmp_path / "state.db")
+        db.create_session("sess_001", session_key="cli:direct", source="agent")
+        db.append_message("sess_001", role="user", content="Hello world")
+        results = db.search_messages("nonexistent_topic_xyz")
+        assert results == []
+
+    def test_search_or_syntax(self, tmp_path: Path) -> None:
+        db = SessionDB(tmp_path / "state.db")
+        db.create_session("sess_001", session_key="cli:direct", source="agent")
+        db.append_message("sess_001", role="user", content="Deploying with kubernetes")
+        results = db.search_messages("docker OR kubernetes")
+        assert len(results) > 0
+
+    def test_search_cjk_trigram(self, tmp_path: Path) -> None:
+        db = SessionDB(tmp_path / "state.db")
+        db.create_session("sess_001", session_key="cli:direct", source="agent")
+        db.append_message("sess_001", role="user", content="今天天气真好我们去公园散步吧")
+        results = db.search_messages("天气真好")
+        assert len(results) > 0
+
+    def test_search_cjk_short_like_fallback(self, tmp_path: Path) -> None:
+        db = SessionDB(tmp_path / "state.db")
+        db.create_session("sess_001", session_key="cli:direct", source="agent")
+        db.append_message("sess_001", role="user", content="测试中文搜索功能")
+        results = db.search_messages("搜索")
+        assert len(results) > 0
+
+    def test_search_with_role_filter(self, tmp_path: Path) -> None:
+        db = SessionDB(tmp_path / "state.db")
+        db.create_session("sess_001", session_key="cli:direct", source="agent")
+        db.append_message("sess_001", role="user", content="Deploy docker")
+        db.append_message("sess_001", role="assistant", content="Use docker-compose")
+        results = db.search_messages("docker", role_filter=["user"])
+        assert len(results) == 1
+        assert results[0]["role"] == "user"
+
+    def test_search_exclude_sources(self, tmp_path: Path) -> None:
+        db = SessionDB(tmp_path / "state.db")
+        db.create_session("sess_001", session_key="cli:direct", source="agent")
+        db.create_session("sess_002", session_key="sub:t1", source="subagent")
+        db.append_message("sess_001", role="user", content="Deploy docker containers")
+        db.append_message("sess_002", role="user", content="docker build")
+        results = db.search_messages("docker", exclude_sources=["subagent"])
+        assert all(r["session_id"] == "sess_001" for r in results)
+
+    def test_contains_cjk(self) -> None:
+        from nanobot.session.db import _contains_cjk
+        assert _contains_cjk("中文测试") is True
+        assert _contains_cjk("hello world") is False
+        assert _contains_cjk("mixed 中文 mixed") is True
+
+    def test_sanitize_fts5_query(self) -> None:
+        from nanobot.session.db import SessionDB
+        assert SessionDB._sanitize_fts5_query('hello world') == 'hello world'
+        assert SessionDB._sanitize_fts5_query('"exact phrase"') == '"exact phrase"'
+        assert SessionDB._sanitize_fts5_query('test -exclude') == 'test exclude'
