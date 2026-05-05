@@ -12,6 +12,7 @@ from typing import Any
 from loguru import logger
 
 from nanobot.config.paths import get_legacy_sessions_dir
+from nanobot.session.db import SessionDB, generate_session_id
 from nanobot.utils.helpers import (
     ensure_dir,
     estimate_message_tokens,
@@ -33,6 +34,8 @@ class Session:
     updated_at: datetime = field(default_factory=datetime.now)
     metadata: dict[str, Any] = field(default_factory=dict)
     last_consolidated: int = 0  # Number of messages already consolidated to files
+    db_id: str = ""  # SQLite session ID
+    last_db_flush_idx: int = 0  # Messages already flushed to SQLite
 
     @staticmethod
     def _annotate_message_time(message: dict[str, Any], content: Any) -> Any:
@@ -243,11 +246,12 @@ class SessionManager:
     Sessions are stored as JSONL files in the sessions directory.
     """
 
-    def __init__(self, workspace: Path):
+    def __init__(self, workspace: Path, db_path: Path | None = None):
         self.workspace = workspace
         self.sessions_dir = ensure_dir(self.workspace / "sessions")
         self.legacy_sessions_dir = get_legacy_sessions_dir()
         self._cache: dict[str, Session] = {}
+        self._db = SessionDB(db_path or Path.home() / ".nanobot" / "state.db")
 
     @staticmethod
     def safe_key(key: str) -> str:
@@ -277,7 +281,7 @@ class SessionManager:
 
         session = self._load(key)
         if session is None:
-            session = Session(key=key)
+            session = Session(key=key, db_id=generate_session_id())
 
         self._cache[key] = session
         return session
@@ -303,6 +307,8 @@ class SessionManager:
             created_at = None
             updated_at = None
             last_consolidated = 0
+            db_id = ""
+            last_db_flush_idx = 0
 
             with open(path, encoding="utf-8") as f:
                 for line in f:
@@ -317,6 +323,8 @@ class SessionManager:
                         created_at = datetime.fromisoformat(data["created_at"]) if data.get("created_at") else None
                         updated_at = datetime.fromisoformat(data["updated_at"]) if data.get("updated_at") else None
                         last_consolidated = data.get("last_consolidated", 0)
+                        db_id = data.get("db_id", "")
+                        last_db_flush_idx = data.get("last_db_flush_idx", 0)
                     else:
                         messages.append(data)
 
@@ -326,7 +334,9 @@ class SessionManager:
                 created_at=created_at or datetime.now(),
                 updated_at=updated_at or datetime.now(),
                 metadata=metadata,
-                last_consolidated=last_consolidated
+                last_consolidated=last_consolidated,
+                db_id=db_id or generate_session_id(),
+                last_db_flush_idx=last_db_flush_idx
             )
         except Exception as e:
             logger.warning("Failed to load session {}: {}", key, e)
@@ -347,6 +357,8 @@ class SessionManager:
             created_at: datetime | None = None
             updated_at: datetime | None = None
             last_consolidated = 0
+            db_id = ""
+            last_db_flush_idx = 0
             skipped = 0
 
             with open(path, encoding="utf-8") as f:
@@ -369,6 +381,8 @@ class SessionManager:
                             with suppress(ValueError, TypeError):
                                 updated_at = datetime.fromisoformat(data["updated_at"])
                         last_consolidated = data.get("last_consolidated", 0)
+                        db_id = data.get("db_id", "")
+                        last_db_flush_idx = data.get("last_db_flush_idx", 0)
                     else:
                         messages.append(data)
 
@@ -384,7 +398,9 @@ class SessionManager:
                 created_at=created_at or datetime.now(),
                 updated_at=updated_at or datetime.now(),
                 metadata=metadata,
-                last_consolidated=last_consolidated
+                last_consolidated=last_consolidated,
+                db_id=db_id or generate_session_id(),
+                last_db_flush_idx=last_db_flush_idx
             )
         except Exception as e:
             logger.warning("Repair failed for session {}: {}", key, e)
@@ -414,6 +430,32 @@ class SessionManager:
         tmp_path = path.with_suffix(".jsonl.tmp")
 
         try:
+            # SQLite shadow flush -- failure is non-fatal; done BEFORE JSONL
+            # write so last_db_flush_idx in metadata is consistent with SQLite.
+            try:
+                self._db.ensure_session(
+                    session.db_id,
+                    session_key=session.key,
+                    source="agent",
+                )
+                for msg in session.messages[session.last_db_flush_idx:]:
+                    role = msg.get("role", "")
+                    content = msg.get("content")
+                    if isinstance(content, list):
+                        content = json.dumps(content, ensure_ascii=False)
+                    self._db.append_message(
+                        session.db_id,
+                        role=role,
+                        content=content,
+                        tool_calls=msg.get("tool_calls"),
+                        tool_call_id=msg.get("tool_call_id"),
+                        tool_name=msg.get("name"),
+                        reasoning_content=msg.get("reasoning_content"),
+                    )
+                session.last_db_flush_idx = len(session.messages)
+            except Exception:
+                logger.warning("SQLite flush failed for session {}", session.key, exc_info=True)
+
             with open(tmp_path, "w", encoding="utf-8") as f:
                 metadata_line = {
                     "_type": "metadata",
@@ -421,7 +463,9 @@ class SessionManager:
                     "created_at": session.created_at.isoformat(),
                     "updated_at": session.updated_at.isoformat(),
                     "metadata": session.metadata,
-                    "last_consolidated": session.last_consolidated
+                    "last_consolidated": session.last_consolidated,
+                    "db_id": session.db_id,
+                    "last_db_flush_idx": session.last_db_flush_idx,
                 }
                 f.write(json.dumps(metadata_line, ensure_ascii=False) + "\n")
                 for msg in session.messages:
