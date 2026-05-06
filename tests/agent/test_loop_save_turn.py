@@ -89,11 +89,11 @@ def test_save_turn_skips_multimodal_user_when_only_runtime_context() -> None:
 
     loop._save_turn(
         session,
-        [{"role": "user", "content": f"{runtime}\n\nHello world"}],
+        [{"role": "user", "content": f"Hello world\n\n{runtime}"}],
         skip=0,
     )
     assert len(session.messages) == 1
-    assert session.messages[0]["content"] == f"{runtime}\n\nHello world"
+    assert session.messages[0]["content"] == f"Hello world\n\n{runtime}"
 
 
 def test_save_turn_keeps_image_placeholder_with_runtime_context() -> None:
@@ -344,7 +344,7 @@ async def test_process_message_persists_media_paths_on_user_turn(tmp_path: Path)
     loop.sessions.invalidate("websocket:c-media")
     persisted = loop.sessions.get_or_create("websocket:c-media")
     assert [m["role"] for m in persisted.messages] == ["user"]
-    assert persisted.messages[0]["content"].endswith("look")
+    assert persisted.messages[0]["content"].startswith("look")
     assert persisted.messages[0]["media"] == [str(img_a), str(img_b)]
 
 

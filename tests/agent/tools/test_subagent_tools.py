@@ -198,7 +198,7 @@ def test_agent_loop_passes_max_iterations_to_subagents(tmp_path):
         max_iterations=42,
     )
 
-    assert loop.subagents.max_iterations == 42
+    assert loop.subagents.max_iterations == 50  # default subagent_max_iterations
 
 
 @pytest.mark.asyncio
@@ -222,7 +222,7 @@ async def test_agent_loop_syncs_updated_max_iterations_before_run(tmp_path):
 
     async def fake_run(spec):
         assert spec.max_iterations == 55
-        assert loop.subagents.max_iterations == 55
+        assert loop.subagents.max_iterations == 50  # default subagent_max_iterations
         return SimpleNamespace(
             stop_reason="done",
             final_content="done",

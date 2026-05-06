@@ -80,6 +80,12 @@ class AgentDefaults(Base):
     context_block_limit: int | None = None
     temperature: float = 0.1
     max_tool_iterations: int = 200
+    subagent_max_iterations: int = Field(
+        default=50,
+        ge=1,
+        validation_alias=AliasChoices("subagentMaxIterations"),
+        serialization_alias="subagentMaxIterations",
+    )
     max_concurrent_subagents: int = Field(default=1, ge=1)
     max_tool_result_chars: int = 16_000
     provider_retry_mode: Literal["standard", "persistent"] = "standard"

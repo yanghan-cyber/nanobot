@@ -224,6 +224,7 @@ class AgentLoop:
         tools_config: ToolsConfig | None = None,
         provider_snapshot_loader: Callable[[], ProviderSnapshot] | None = None,
         provider_signature: tuple[object, ...] | None = None,
+        subagent_max_iterations: int | None = None,
     ):
         from nanobot.config.schema import BashToolConfig, ToolsConfig, WebToolsConfig
 
@@ -238,6 +239,10 @@ class AgentLoop:
         self.model = model or provider.get_default_model()
         self.max_iterations = (
             max_iterations if max_iterations is not None else defaults.max_tool_iterations
+        )
+        self.subagent_max_iterations = (
+            subagent_max_iterations if subagent_max_iterations is not None
+            else defaults.subagent_max_iterations
         )
         self.context_window_tokens = (
             context_window_tokens
@@ -280,7 +285,7 @@ class AgentLoop:
             bash_config=self.bash_config,
             restrict_to_workspace=restrict_to_workspace,
             disabled_skills=disabled_skills,
-            max_iterations=self.max_iterations,
+            max_iterations=self.subagent_max_iterations,
             session_manager=self.sessions,
         )
         self._unified_session = unified_session
@@ -334,7 +339,7 @@ class AgentLoop:
 
     def _sync_subagent_runtime_limits(self) -> None:
         """Keep subagent runtime limits aligned with mutable loop settings."""
-        self.subagents.max_iterations = self.max_iterations
+        self.subagents.max_iterations = self.subagent_max_iterations
 
     def _apply_provider_snapshot(self, snapshot: ProviderSnapshot) -> None:
         """Swap model/provider for future turns without disturbing an active one."""
@@ -639,9 +644,9 @@ class AgentLoop:
                     self.context.timezone,
                 )
                 if isinstance(user_content, str):
-                    merged: str | list[dict[str, Any]] = f"{runtime_ctx}\n\n{user_content}"
+                    merged: str | list[dict[str, Any]] = f"{user_content}\n\n{runtime_ctx}"
                 else:
-                    merged = [{"type": "text", "text": runtime_ctx}] + user_content
+                    merged = user_content + [{"type": "text", "text": runtime_ctx}]
                 return {"role": "user", "content": merged}
 
             items: list[dict[str, Any]] = []
@@ -1236,7 +1241,7 @@ class AgentLoop:
                     msg.channel, msg.chat_id, self.context.timezone,
                     session_summary=pending,
                 )
-                text = f"{runtime_ctx}\n\n{msg.content}"
+                text = f"{msg.content}\n\n{runtime_ctx}"
             else:
                 text = ""
             session.add_message("user", text, **extra)

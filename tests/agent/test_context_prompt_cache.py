@@ -76,7 +76,7 @@ def test_runtime_context_is_separate_untrusted_user_message(tmp_path) -> None:
     assert messages[0]["role"] == "system"
     assert "## Current Session" not in messages[0]["content"]
 
-    # Runtime context is prepended to the user message so it stays stable in history.
+    # Runtime context is appended to the user message.
     assert messages[-1]["role"] == "user"
     user_content = messages[-1]["content"]
     assert isinstance(user_content, str)
@@ -85,8 +85,8 @@ def test_runtime_context_is_separate_untrusted_user_message(tmp_path) -> None:
     assert "Channel: cli" in user_content
     assert "Chat ID: direct" in user_content
     assert "Return exactly: OK" in user_content
-    # Runtime context comes BEFORE the user text (stable prefix for caching)
-    assert user_content.index(ContextBuilder._RUNTIME_CONTEXT_TAG) < user_content.index("Return exactly: OK")
+    # Runtime context is appended AFTER the user text
+    assert user_content.index(ContextBuilder._RUNTIME_CONTEXT_TAG) > user_content.index("Return exactly: OK")
 
 
 def test_runtime_context_includes_sender_id_when_provided(tmp_path) -> None:

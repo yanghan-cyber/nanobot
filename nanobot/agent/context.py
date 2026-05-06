@@ -147,12 +147,11 @@ class ContextBuilder:
         runtime_ctx = self._build_runtime_context(channel, chat_id, self.timezone, session_summary=session_summary, sender_id=sender_id)
         user_content = self._build_user_content(current_message, media)
 
-        # Prepend runtime context before user content so it stays inside the
-        # cached prefix once saved to history (identical bytes = cache hit).
+        # Append runtime context after user content.
         if isinstance(user_content, str):
-            merged = f"{runtime_ctx}\n\n{user_content}"
+            merged = f"{user_content}\n\n{runtime_ctx}"
         else:
-            merged = [{"type": "text", "text": runtime_ctx}] + user_content
+            merged = user_content + [{"type": "text", "text": runtime_ctx}]
         effective_prompt = system_prompt if system_prompt is not None else self.build_system_prompt(skill_names, channel=channel)
         messages = [
             {"role": "system", "content": effective_prompt},

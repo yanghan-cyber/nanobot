@@ -1029,6 +1029,7 @@ at once. If your provider can handle more parallel work, raise the limit:
 | Option | Default | Description |
 |--------|---------|-------------|
 | `agents.defaults.maxConcurrentSubagents` | `1` | Maximum number of spawned subagents that may run at the same time. Attempts to spawn beyond this limit return an error. |
+| `agents.defaults.subagentMaxIterations` | `50` | Maximum tool-call iterations per subagent run. When reached, an extra LLM call generates a summary. |
 
 
 ## Auto Compact
