@@ -80,8 +80,16 @@ class AgentDefaults(Base):
     context_block_limit: int | None = None
     temperature: float = 0.1
     max_tool_iterations: int = 200
+    max_concurrent_subagents: int = Field(default=1, ge=1)
     max_tool_result_chars: int = 16_000
     provider_retry_mode: Literal["standard", "persistent"] = "standard"
+    tool_hint_max_length: int = Field(
+        default=40,
+        ge=20,
+        le=500,
+        validation_alias=AliasChoices("toolHintMaxLength"),
+        serialization_alias="toolHintMaxLength",
+    )  # Max characters for tool hint display (e.g. "$ cd …/project && npm test")
     reasoning_effort: str | None = None  # low / medium / high / adaptive - enables LLM thinking mode
     timezone: str = "UTC"  # IANA timezone, e.g. "Asia/Shanghai", "America/New_York"
     unified_session: bool = False  # Share one session across all channels (single-user multi-device)

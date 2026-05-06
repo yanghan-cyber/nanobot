@@ -747,7 +747,7 @@ class BashTool(Tool):
         from nanobot.security.network import contains_internal_url
 
         if contains_internal_url(cmd):
-            # SSRF stays fatal in the runner, so keep this marker direct.
+            # The runner turns this marker into a non-retryable security hint.
             return "Error: Command blocked by safety guard (internal/private URL detected)"
 
         if self.restrict_to_workspace:
