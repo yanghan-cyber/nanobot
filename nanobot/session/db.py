@@ -72,10 +72,10 @@ BEGIN
     INSERT INTO tool_invocations (session_id, tool_name, skill_name, created_at)
     SELECT
         NEW.session_id,
-        json_extract(tc.value, '$.name'),
+        json_extract(tc.value, '$.function.name'),
         CASE
-            WHEN json_extract(tc.value, '$.name') = 'load_skill'
-            THEN json_extract(json_extract(tc.value, '$.arguments'), '$.skill_name')
+            WHEN json_extract(tc.value, '$.function.name') = 'load_skill'
+            THEN json_extract(json_extract(tc.value, '$.function.arguments'), '$.skill_name')
             ELSE NULL
         END,
         NEW.created_at
@@ -186,10 +186,10 @@ def _migrate_v2_to_v3(conn: sqlite3.Connection) -> None:
             INSERT INTO tool_invocations (session_id, tool_name, skill_name, created_at)
             SELECT
                 NEW.session_id,
-                json_extract(tc.value, '$.name'),
+                json_extract(tc.value, '$.function.name'),
                 CASE
-                    WHEN json_extract(tc.value, '$.name') = 'load_skill'
-                    THEN json_extract(json_extract(tc.value, '$.arguments'), '$.skill_name')
+                    WHEN json_extract(tc.value, '$.function.name') = 'load_skill'
+                    THEN json_extract(json_extract(tc.value, '$.function.arguments'), '$.skill_name')
                     ELSE NULL
                 END,
                 NEW.created_at
@@ -208,10 +208,10 @@ def _migrate_v2_to_v3(conn: sqlite3.Connection) -> None:
             INSERT INTO tool_invocations (session_id, tool_name, skill_name, created_at)
             SELECT
                 m.session_id,
-                json_extract(tc.value, '$.name'),
+                json_extract(tc.value, '$.function.name'),
                 CASE
-                    WHEN json_extract(tc.value, '$.name') = 'load_skill'
-                    THEN json_extract(json_extract(tc.value, '$.arguments'), '$.skill_name')
+                    WHEN json_extract(tc.value, '$.function.name') = 'load_skill'
+                    THEN json_extract(json_extract(tc.value, '$.function.arguments'), '$.skill_name')
                     ELSE NULL
                 END,
                 m.created_at
