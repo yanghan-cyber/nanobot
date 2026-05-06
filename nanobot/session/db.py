@@ -11,11 +11,11 @@ import time
 from datetime import datetime
 from pathlib import Path
 from secrets import token_hex
-from typing import Any
+from typing import Any, Callable
 
 from loguru import logger
 
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 3
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -33,8 +33,9 @@ CREATE TABLE IF NOT EXISTS sessions (
     parent_session_id     TEXT,
     system_prompt_snapshot TEXT,
     started_at            REAL NOT NULL,
-    ended_at              REAL,
-    end_reason            TEXT,
+    last_active_at        REAL,
+    terminated_at         REAL,
+    termination_reason    TEXT,
     message_count         INTEGER DEFAULT 0,
     input_tokens          INTEGER DEFAULT 0,
     output_tokens         INTEGER DEFAULT 0,
@@ -55,6 +56,44 @@ CREATE TABLE IF NOT EXISTS messages (
     metadata            TEXT,
     created_at          REAL NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS tool_invocations (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id  TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    tool_name   TEXT NOT NULL,
+    skill_name  TEXT,
+    created_at  REAL NOT NULL
+);
+
+CREATE TRIGGER IF NOT EXISTS trg_tool_invocations_ai
+AFTER INSERT ON messages
+WHEN NEW.tool_calls IS NOT NULL
+BEGIN
+    INSERT INTO tool_invocations (session_id, tool_name, skill_name, created_at)
+    SELECT
+        NEW.session_id,
+        json_extract(tc.value, '$.name'),
+        CASE
+            WHEN json_extract(tc.value, '$.name') = 'load_skill'
+            THEN json_extract(json_extract(tc.value, '$.arguments'), '$.skill_name')
+            ELSE NULL
+        END,
+        NEW.created_at
+    FROM json_each(NEW.tool_calls) AS tc;
+END;
+
+CREATE VIEW IF NOT EXISTS v_tool_stats AS
+    SELECT tool_name, COUNT(*) AS total_calls
+    FROM tool_invocations
+    GROUP BY tool_name
+    ORDER BY total_calls DESC;
+
+CREATE VIEW IF NOT EXISTS v_skill_stats AS
+    SELECT skill_name, COUNT(*) AS total_calls
+    FROM tool_invocations
+    WHERE skill_name IS NOT NULL
+    GROUP BY skill_name
+    ORDER BY total_calls DESC;
 """
 
 _FTS_SQL = """
@@ -94,14 +133,113 @@ END;
 _INDEX_SQL = """
 CREATE INDEX IF NOT EXISTS idx_sessions_session_key ON sessions(session_key);
 CREATE INDEX IF NOT EXISTS idx_sessions_started_at ON sessions(started_at);
-CREATE INDEX IF NOT EXISTS idx_sessions_ended_at ON sessions(ended_at);
+CREATE INDEX IF NOT EXISTS idx_sessions_terminated_at ON sessions(terminated_at);
 CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id);
+CREATE INDEX IF NOT EXISTS idx_tool_inv_session ON tool_invocations(session_id);
+CREATE INDEX IF NOT EXISTS idx_tool_inv_tool_name ON tool_invocations(tool_name);
+CREATE INDEX IF NOT EXISTS idx_tool_inv_skill_name ON tool_invocations(skill_name);
 """
 
 
 def _contains_cjk(text: str) -> bool:
     """Return True if *text* contains any CJK characters."""
     return any('一' <= c <= '鿿' or '㐀' <= c <= '䶿' for c in text)
+
+
+def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
+    """Migrate schema from v1 to v2: rename ended_at/end_reason fields."""
+    # Rename ended_at -> last_active_at
+    conn.execute("ALTER TABLE sessions RENAME COLUMN ended_at TO last_active_at")
+    # Add terminated_at column
+    conn.execute("ALTER TABLE sessions ADD COLUMN terminated_at REAL")
+    # Only set terminated_at for sessions that were explicitly ended (end_reason IS NOT NULL).
+    # In v1, save() set ended_at on every save, but end_session() also set end_reason.
+    # Sessions with end_reason IS NULL were saved but never terminated -- they should stay active.
+    conn.execute(
+        "UPDATE sessions SET terminated_at = last_active_at "
+        "WHERE last_active_at IS NOT NULL AND end_reason IS NOT NULL"
+    )
+    # Rename end_reason -> termination_reason
+    conn.execute("ALTER TABLE sessions RENAME COLUMN end_reason TO termination_reason")
+    # Update index
+    conn.execute("DROP INDEX IF EXISTS idx_sessions_ended_at")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_terminated_at ON sessions(terminated_at)")
+    conn.commit()
+
+
+def _migrate_v2_to_v3(conn: sqlite3.Connection) -> None:
+    """Migrate schema from v2 to v3: add tool_invocations table with trigger, indexes, views; backfill."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS tool_invocations (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id  TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+            tool_name   TEXT NOT NULL,
+            skill_name  TEXT,
+            created_at  REAL NOT NULL
+        )
+    """)
+    conn.execute("""
+        CREATE TRIGGER IF NOT EXISTS trg_tool_invocations_ai
+        AFTER INSERT ON messages
+        WHEN NEW.tool_calls IS NOT NULL
+        BEGIN
+            INSERT INTO tool_invocations (session_id, tool_name, skill_name, created_at)
+            SELECT
+                NEW.session_id,
+                json_extract(tc.value, '$.name'),
+                CASE
+                    WHEN json_extract(tc.value, '$.name') = 'load_skill'
+                    THEN json_extract(json_extract(tc.value, '$.arguments'), '$.skill_name')
+                    ELSE NULL
+                END,
+                NEW.created_at
+            FROM json_each(NEW.tool_calls) AS tc;
+        END
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_tool_inv_session ON tool_invocations(session_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_tool_inv_tool_name ON tool_invocations(tool_name)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_tool_inv_skill_name ON tool_invocations(skill_name)")
+    # Backfill from existing messages (guard against DBs where messages table doesn't exist yet)
+    has_messages = conn.execute(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='messages'"
+    ).fetchone()[0] > 0
+    if has_messages:
+        conn.execute("""
+            INSERT INTO tool_invocations (session_id, tool_name, skill_name, created_at)
+            SELECT
+                m.session_id,
+                json_extract(tc.value, '$.name'),
+                CASE
+                    WHEN json_extract(tc.value, '$.name') = 'load_skill'
+                    THEN json_extract(json_extract(tc.value, '$.arguments'), '$.skill_name')
+                    ELSE NULL
+                END,
+                m.created_at
+            FROM messages m, json_each(m.tool_calls) AS tc
+            WHERE m.tool_calls IS NOT NULL
+        """)
+    conn.execute("""
+        CREATE VIEW IF NOT EXISTS v_tool_stats AS
+            SELECT tool_name, COUNT(*) AS total_calls
+            FROM tool_invocations
+            GROUP BY tool_name
+            ORDER BY total_calls DESC
+    """)
+    conn.execute("""
+        CREATE VIEW IF NOT EXISTS v_skill_stats AS
+            SELECT skill_name, COUNT(*) AS total_calls
+            FROM tool_invocations
+            WHERE skill_name IS NOT NULL
+            GROUP BY skill_name
+            ORDER BY total_calls DESC
+    """)
+    conn.commit()
+
+
+_MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
+    1: _migrate_v1_to_v2,
+    2: _migrate_v2_to_v3,
+}
 
 
 def _count_cjk(text: str) -> int:
@@ -130,7 +268,7 @@ class SessionDB:
         "input_tokens",
         "output_tokens",
         "cache_read_tokens",
-        "ended_at",
+        "last_active_at",
     })
 
     def __init__(self, path: Path) -> None:
@@ -152,17 +290,47 @@ class SessionDB:
             pass
 
     def _init_schema(self) -> None:
-        """Create or verify all schema objects."""
-        self._conn.executescript(_SCHEMA_SQL)
-        self._conn.executescript(_FTS_SQL)
-        self._conn.executescript(_INDEX_SQL)
-        cursor = self._conn.execute("SELECT COUNT(*) FROM schema_version")
-        if cursor.fetchone()[0] == 0:
+        """Create or verify all schema objects, running migrations as needed."""
+        # Check if database exists
+        cursor = self._conn.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='schema_version'"
+        )
+        db_exists = cursor.fetchone()[0] > 0
+
+        if not db_exists:
+            # Fresh database - create everything
+            self._conn.executescript(_SCHEMA_SQL)
+            self._conn.executescript(_FTS_SQL)
+            self._conn.executescript(_INDEX_SQL)
             self._conn.execute(
                 "INSERT INTO schema_version (version, applied_at) VALUES (?, ?)",
                 (_SCHEMA_VERSION, time.time()),
             )
             self._conn.commit()
+            return
+
+        # Existing database - check version and migrate
+        cursor = self._conn.execute("SELECT version FROM schema_version")
+        row = cursor.fetchone()
+        current_version = row[0] if row else 0
+
+        if current_version < _SCHEMA_VERSION:
+            logger.info("Migrating database from v{} to v{}", current_version, _SCHEMA_VERSION)
+            for v in range(current_version, _SCHEMA_VERSION):
+                if v in _MIGRATIONS:
+                    _MIGRATIONS[v](self._conn)
+                    self._conn.execute(
+                        "UPDATE schema_version SET version = ?, applied_at = ?",
+                        (v + 1, time.time()),
+                    )
+                    self._conn.commit()
+                    logger.info("Migration v{} -> v{} complete", v, v + 1)
+        elif current_version > _SCHEMA_VERSION:
+            logger.warning(
+                "Database version {} is newer than expected {}. Downgrading is not supported.",
+                current_version,
+                _SCHEMA_VERSION,
+            )
 
     def _execute_write(self, sql: str, params: tuple = ()) -> None:
         """Execute a write statement with retry on lock contention."""
@@ -237,8 +405,8 @@ class SessionDB:
                 parent_session_id=parent_session_id,
             )
 
-    def end_session(self, session_id: str, end_reason: str) -> None:
-        """Mark a session as ended with the given reason.
+    def end_session(self, session_id: str, termination_reason: str) -> None:
+        """Mark a session as terminated with the given reason.
 
         No-op when *session_id* does not exist.
         """
@@ -248,8 +416,8 @@ class SessionDB:
         if row is None:
             return
         self._execute_write(
-            "UPDATE sessions SET ended_at = ?, end_reason = ? WHERE id = ?",
-            (time.time(), end_reason, session_id),
+            "UPDATE sessions SET terminated_at = ?, termination_reason = ? WHERE id = ?",
+            (time.time(), termination_reason, session_id),
         )
 
     def update_session(self, session_id: str, **kwargs: Any) -> None:
@@ -281,9 +449,9 @@ class SessionDB:
         return dict(row)
 
     def get_active_session(self, session_key: str) -> dict | None:
-        """Retrieve the most recent active (non-ended) session for a key."""
+        """Retrieve the most recent active (non-terminated) session for a key."""
         cursor = self._conn.execute(
-            "SELECT * FROM sessions WHERE session_key = ? AND ended_at IS NULL ORDER BY started_at DESC LIMIT 1",
+            "SELECT * FROM sessions WHERE session_key = ? AND terminated_at IS NULL ORDER BY started_at DESC LIMIT 1",
             (session_key,),
         )
         row = cursor.fetchone()
@@ -406,7 +574,8 @@ class SessionDB:
     def list_recent_sessions(self, limit: int = 10) -> list[dict]:
         """List the most recent sessions, ordered by started_at descending."""
         cursor = self._conn.execute(
-            "SELECT id, session_key, source, model, title, started_at, ended_at, "
+            "SELECT id, session_key, source, model, title, started_at, "
+            "last_active_at, terminated_at, termination_reason, "
             "message_count, input_tokens, output_tokens "
             "FROM sessions ORDER BY started_at DESC LIMIT ?",
             (limit,),

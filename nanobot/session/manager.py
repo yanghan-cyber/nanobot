@@ -457,7 +457,7 @@ class SessionManager:
                 self._db.update_session(
                     session.db_id,
                     message_count=len(session.messages),
-                    ended_at=time.time(),
+                    last_active_at=time.time(),
                 )
             except Exception:
                 logger.warning("SQLite flush failed for session {}", session.key, exc_info=True)
