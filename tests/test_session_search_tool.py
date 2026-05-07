@@ -61,3 +61,23 @@ class TestFTSSanitization:
         results = db.search_messages("hello")
         assert len(results) == 1
         assert results[0]["session_id"] == "s1"
+
+
+class TestLimitCap:
+    """Bug #2: limit hard-capped at 5."""
+
+    def test_limit_above_20_clamped_to_20(self, db: SessionDB):
+        """Tool should accept limit up to 20."""
+        from nanobot.agent.tools.session_search import SessionSearchTool
+        tool = SessionSearchTool(db=db, provider=MagicMock(), model="test")
+        schema = tool.parameters
+        assert schema["properties"]["limit"]["description"] == "Max sessions to return (1-20, default 5)."
+
+    def test_search_messages_accepts_custom_limit(self, db: SessionDB):
+        """search_messages should use the caller-provided limit, not hardcoded 20."""
+        for i in range(25):
+            _seed_session(db, f"s{i}", [
+                {"role": "user", "content": f"unique keyword alpha {i}"},
+            ])
+        results = db.search_messages("alpha", limit=25)
+        assert len(results) == 25

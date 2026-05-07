@@ -31,8 +31,8 @@ _SCHEMA: dict[str, Any] = {
         },
         "limit": {
             "type": "integer",
-            "description": "Max sessions to return (1-5, default 3).",
-            "default": 3,
+            "description": "Max sessions to return (1-20, default 5).",
+            "default": 5,
         },
     },
 }
@@ -90,11 +90,11 @@ class SessionSearchTool(Tool):
         *,
         query: str | None = None,
         role_filter: str | None = None,
-        limit: int = 3,
+        limit: int = 5,
         current_session_id: str | None = None,
         **_kwargs: Any,
     ) -> str:
-        limit = max(1, min(5, limit))
+        limit = max(1, min(20, limit))
 
         if not query or not query.strip():
             return self._format_recent(limit)
@@ -161,6 +161,7 @@ class SessionSearchTool(Tool):
             query,
             role_filter=parsed_roles,
             exclude_sources=None,
+            limit=limit * 10,
         )
 
         # Group by session, exclude current lineage
