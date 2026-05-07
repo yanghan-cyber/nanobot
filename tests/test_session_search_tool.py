@@ -81,3 +81,23 @@ class TestLimitCap:
             ])
         results = db.search_messages("alpha", limit=25)
         assert len(results) == 25
+
+
+class TestModelPersistence:
+    """Bug #1: model is always NULL in sessions table."""
+
+    def test_model_stored_on_create(self, db: SessionDB):
+        db.create_session("s1", session_key="test:key", source="main", model="gpt-4o")
+        session = db.get_session("s1")
+        assert session["model"] == "gpt-4o"
+
+    def test_model_stored_via_ensure_session(self, db: SessionDB):
+        db.ensure_session("s1", session_key="test:key", source="main", model="claude-4")
+        session = db.get_session("s1")
+        assert session["model"] == "claude-4"
+
+    def test_ensure_session_preserves_existing_model(self, db: SessionDB):
+        db.create_session("s1", session_key="test:key", source="main", model="gpt-4o")
+        db.ensure_session("s1", session_key="test:key", source="main", model="other")
+        session = db.get_session("s1")
+        assert session["model"] == "gpt-4o"
