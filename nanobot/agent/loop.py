@@ -435,9 +435,13 @@ class AgentLoop:
             self.tools.register(
                 CronTool(self.cron_service, default_timezone=self.context.timezone or "UTC")
             )
+        search_scope = "current"
+        if hasattr(self, "_defaults") and self._defaults:
+            search_scope = getattr(self._defaults, "searchScope", "current")
         self.tools.register(
             SessionSearchTool(
-                db=self.sessions._db, provider=self.provider, model=self.model
+                db=self.sessions._db, provider=self.provider, model=self.model,
+                search_scope=search_scope,
             )
         )
 

@@ -145,11 +145,12 @@ class SessionSearchTool(Tool):
     """Search past sessions by keyword (FTS5) or list recent ones."""
 
     def __init__(
-        self, db: SessionDB, provider: LLMProvider, model: str
+        self, db: SessionDB, provider: LLMProvider, model: str, search_scope: str = "current"
     ) -> None:
         self._db = db
         self._provider = provider
         self._model = model
+        self._search_scope = search_scope
 
     @property
     def name(self) -> str:
@@ -191,23 +192,29 @@ class SessionSearchTool(Tool):
         from nanobot.agent.loop import _current_session_id
         current_session_id = _current_session_id.get(None)
 
+        current_session_key = None
+        if self._search_scope == "current" and current_session_id:
+            session_info = self._db.get_session(current_session_id)
+            if session_info:
+                current_session_key = session_info.get("session_key")
+
         if not query or not query.strip():
-            return self._format_recent(limit, current_session_id)
+            return self._format_recent(limit, current_session_id, current_session_key)
 
         return await self._search(
-            query.strip(), limit, role_filter, current_session_id
+            query.strip(), limit, role_filter, current_session_id, current_session_key
         )
 
     # ------------------------------------------------------------------
     # Recent sessions
     # ------------------------------------------------------------------
 
-    def _format_recent(self, limit: int, current_session_id: str | None = None) -> str:
+    def _format_recent(self, limit: int, current_session_id: str | None = None, session_key: str | None = None) -> str:
         exclude_ids: set[str] = set()
         if current_session_id:
             exclude_ids = self._get_lineage_ids(current_session_id)
 
-        sessions = self._db.list_recent_sessions(limit=limit + len(exclude_ids))
+        sessions = self._db.list_recent_sessions(limit=limit + len(exclude_ids), session_key=session_key)
         if not sessions:
             return "No sessions found."
         lines: list[str] = []
@@ -251,6 +258,7 @@ class SessionSearchTool(Tool):
         limit: int,
         role_filter: str | None,
         current_session_id: str | None,
+        session_key: str | None = None,
     ) -> str:
         exclude_ids: set[str] = set()
         if current_session_id:
@@ -265,6 +273,7 @@ class SessionSearchTool(Tool):
             role_filter=parsed_roles,
             exclude_sources=None,
             limit=limit * 10,
+            session_key=session_key,
         )
 
         # Group by session, exclude current lineage
@@ -310,14 +319,19 @@ class SessionSearchTool(Tool):
                 "%Y-%m-%d %H:%M",
                 time.localtime((session_info or {}).get("started_at", 0)),
             )
-            results.append({
+            entry = {
                 "session_id": sid,
                 "when": started,
                 "source": (session_info or {}).get("source", "unknown"),
                 "model": (session_info or {}).get("model") or "?",
                 "title": (session_info or {}).get("title") or "(untitled)",
                 "summary": summary_map.get(sid, "(summary unavailable)"),
-            })
+            }
+            if self._search_scope == "all":
+                sk = (session_info or {}).get("session_key", "")
+                entry["session_key"] = sk
+                entry["channel"] = sk.split(":")[0] if ":" in sk else sk
+            results.append(entry)
 
         return json.dumps({
             "success": True,

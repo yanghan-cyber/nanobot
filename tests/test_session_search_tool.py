@@ -149,3 +149,53 @@ class TestCurrentSessionExclusion:
         result = tool._format_recent(limit=5, current_session_id="s2")
         assert "s1" not in result
         assert "s2" not in result
+
+
+class TestSearchScope:
+    """Feature #6: search_scope filters by session_key."""
+
+    def test_search_filters_by_session_key(self, db: SessionDB):
+        _seed_session(db, "s1", [
+            {"role": "user", "content": "hello from feishu"},
+        ])
+        db._conn.execute("UPDATE sessions SET session_key = 'feishu:user1' WHERE id = 's1'")
+        db._conn.commit()
+
+        _seed_session(db, "s2", [
+            {"role": "user", "content": "hello from cli"},
+        ])
+        db._conn.execute("UPDATE sessions SET session_key = 'cli_direct' WHERE id = 's2'")
+        db._conn.commit()
+
+        results = db.search_messages("hello", session_key="feishu:user1")
+        assert len(results) == 1
+        assert results[0]["session_id"] == "s1"
+
+    def test_search_all_scope(self, db: SessionDB):
+        _seed_session(db, "s1", [
+            {"role": "user", "content": "hello from feishu"},
+        ])
+        db._conn.execute("UPDATE sessions SET session_key = 'feishu:user1' WHERE id = 's1'")
+        db._conn.commit()
+
+        _seed_session(db, "s2", [
+            {"role": "user", "content": "hello from cli"},
+        ])
+        db._conn.execute("UPDATE sessions SET session_key = 'cli_direct' WHERE id = 's2'")
+        db._conn.commit()
+
+        results = db.search_messages("hello", session_key=None)
+        assert len(results) == 2
+
+    def test_list_recent_filters_by_session_key(self, db: SessionDB):
+        _seed_session(db, "s1", [])
+        db._conn.execute("UPDATE sessions SET session_key = 'feishu:user1' WHERE id = 's1'")
+        db._conn.commit()
+
+        _seed_session(db, "s2", [])
+        db._conn.execute("UPDATE sessions SET session_key = 'cli_direct' WHERE id = 's2'")
+        db._conn.commit()
+
+        sessions = db.list_recent_sessions(limit=10, session_key="feishu:user1")
+        assert len(sessions) == 1
+        assert sessions[0]["id"] == "s1"
