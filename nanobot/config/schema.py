@@ -118,6 +118,17 @@ class AgentDefaults(Base):
         serialization_alias="consolidationRatio",
     )  # Consolidation target ratio (0.5 = 50% of budget retained after compression)
     dream: DreamConfig = Field(default_factory=DreamConfig)
+    titleRegenerateInterval: int = Field(
+        default=1800,
+        ge=0,
+        validation_alias=AliasChoices("titleRegenerateInterval"),
+        serialization_alias="titleRegenerateInterval",
+    )
+    searchScope: str = Field(
+        default="current",
+        validation_alias=AliasChoices("searchScope"),
+        serialization_alias="searchScope",
+    )
 
 
 class AgentsConfig(Base):
