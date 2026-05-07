@@ -131,7 +131,7 @@ class TestMessageCRUD:
         db.create_session("sess_001", session_key="cli:direct", source="agent")
         db.append_message(
             "sess_001", role="assistant", content="",
-            tool_calls=[{"name": "bash", "arguments": '{"command": "ls"}'}],
+            tool_calls=[{"function": {"name": "bash", "arguments": '{"command": "ls"}'}}],
         )
         msgs = db.get_messages("sess_001")
         assert "bash" in msgs[0]["tool_calls"]
@@ -384,7 +384,7 @@ class TestToolInvocations:
         db = self._make_db_with_session(tmp_path)
         db.append_message(
             "sess_001", role="assistant", content="",
-            tool_calls=[{"name": "bash", "arguments": '{"command": "ls"}', "id": "tc_1"}],
+            tool_calls=[{"function": {"name": "bash", "arguments": '{"command": "ls"}'}, "id": "tc_1"}],
         )
         rows = self._fetch_invocations(db)
         assert len(rows) == 1
@@ -413,9 +413,9 @@ class TestToolInvocations:
         db.append_message(
             "sess_001", role="assistant", content="",
             tool_calls=[
-                {"name": "bash", "arguments": '{"command": "ls"}', "id": "tc_1"},
-                {"name": "read_file", "arguments": '{"path": "/tmp/f"}', "id": "tc_2"},
-                {"name": "grep", "arguments": '{"pattern": "foo"}', "id": "tc_3"},
+                {"function": {"name": "bash", "arguments": '{"command": "ls"}'}, "id": "tc_1"},
+                {"function": {"name": "read_file", "arguments": '{"path": "/tmp/f"}'}, "id": "tc_2"},
+                {"function": {"name": "grep", "arguments": '{"pattern": "foo"}'}, "id": "tc_3"},
             ],
         )
         rows = self._fetch_invocations(db)
@@ -427,8 +427,7 @@ class TestToolInvocations:
         db.append_message(
             "sess_001", role="assistant", content="",
             tool_calls=[{
-                "name": "load_skill",
-                "arguments": '{"skill_name": "brainstorming"}',
+                "function": {"name": "load_skill", "arguments": '{"skill_name": "brainstorming"}'},
                 "id": "tc_1",
             }],
         )
@@ -441,7 +440,7 @@ class TestToolInvocations:
         db = self._make_db_with_session(tmp_path)
         db.append_message(
             "sess_001", role="assistant", content="",
-            tool_calls=[{"name": "bash", "arguments": '{"command": "ls"}', "id": "tc_1"}],
+            tool_calls=[{"function": {"name": "bash", "arguments": '{"command": "ls"}'}, "id": "tc_1"}],
         )
         rows = self._fetch_invocations(db)
         assert rows[0]["skill_name"] is None
@@ -450,7 +449,7 @@ class TestToolInvocations:
         db = self._make_db_with_session(tmp_path)
         db.append_message(
             "sess_001", role="assistant", content="",
-            tool_calls=[{"name": "bash", "arguments": '{"command": "ls"}', "id": "tc_1"}],
+            tool_calls=[{"function": {"name": "bash", "arguments": '{"command": "ls"}'}, "id": "tc_1"}],
         )
         assert len(self._fetch_invocations(db)) == 1
 
@@ -468,11 +467,11 @@ class TestToolInvocations:
         db.create_session("sess_002", session_key="cli:other", source="agent")
         db.append_message(
             "sess_001", role="assistant", content="",
-            tool_calls=[{"name": "bash", "arguments": '{"command": "ls"}', "id": "tc_1"}],
+            tool_calls=[{"function": {"name": "bash", "arguments": '{"command": "ls"}'}, "id": "tc_1"}],
         )
         db.append_message(
             "sess_002", role="assistant", content="",
-            tool_calls=[{"name": "grep", "arguments": '{"pattern": "foo"}', "id": "tc_2"}],
+            tool_calls=[{"function": {"name": "grep", "arguments": '{"pattern": "foo"}'}, "id": "tc_2"}],
         )
         rows = self._fetch_invocations(db)
         assert len(rows) == 2
@@ -529,13 +528,13 @@ class TestToolInvocationMigration:
             VALUES ('sess_old', 'cli:direct', 1000.0);
             INSERT INTO messages (session_id, role, content, tool_calls, created_at)
             VALUES ('sess_old', 'assistant', '',
-                    '[{"name":"bash","arguments":"{\\"command\\":\\"ls\\"}","id":"tc_1"}]',
+                    '[{"function":{"name":"bash","arguments":"{\\"command\\":\\"ls\\"}"},"id":"tc_1"}]',
                     1001.0);
             INSERT INTO messages (session_id, role, content, tool_calls, created_at)
             VALUES ('sess_old', 'user', 'hello', NULL, 1002.0);
             INSERT INTO messages (session_id, role, content, tool_calls, created_at)
             VALUES ('sess_old', 'assistant', '',
-                    '[{"name":"load_skill","arguments":"{\\"skill_name\\":\\"brainstorming\\"}","id":"tc_2"}]',
+                    '[{"function":{"name":"load_skill","arguments":"{\\"skill_name\\":\\"brainstorming\\"}"},"id":"tc_2"}]',
                     1003.0);
         """)
         conn.commit()

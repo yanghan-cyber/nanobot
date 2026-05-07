@@ -22,6 +22,7 @@ When merging upstream `main` into `yanghan-main`:
 
 ### 3. Agent Loop behavioral differences (`nanobot/agent/loop.py`)
 - **`drop_runtime=False`** in `_save_turn`: user messages are persisted with `[Runtime Context]` block intact. Upstream strips it (`drop_runtime=True`). **Why**: keeping runtime context in history improves prompt cache hit rate on subsequent turns.
+- **Runtime context appended after user content**: `build_messages`, early persist, and pending queue injection all place `[Runtime Context]` **after** the user's text (i.e. `"{user_content}\n\n{runtime_ctx}"`). Upstream prepends it before user content (`"{runtime_ctx}\n\n{user_content}"`). **Why**: user content first is more natural; runtime metadata as a suffix doesn't interfere with the model reading the actual input.
 - **Frozen system prompt**: `_get_frozen_prompt()` / `invalidate_frozen_prompt()` cache the system prompt per session, rebuilt only when session object changes. Upstream rebuilds every turn. **Why**: avoids redundant prompt reconstruction.
 - **Pending message queue**: `_pending_queues` + `_active_sessions` for mid-turn message injection. Messages arriving during an active agent turn are queued and injected via `pending_message_callback` in `AgentRunSpec`. Upstream drops or races these.
 - **Session switch detection**: when session object identity changes between turns, `invalidate_frozen_prompt()` is called to force rebuild.
@@ -30,7 +31,7 @@ When merging upstream `main` into `yanghan-main`:
 - **No `include_timestamps`**: fork does not pass `include_timestamps=True` to `get_history`. Upstream enables it to add `[Message Time: ...]` prefix on user messages. **Why**: fork already preserves the full `[Runtime Context]` block (with `Message Time:`) via `drop_runtime=False`, so the separate timestamp prefix is redundant.
 
 ### 4. Subagent differences (`nanobot/agent/subagent.py`)
-- **`max_iterations=50`** (upstream: 15). **Why**: subagents often need more iterations for complex research tasks.
+- **`subagent_max_iterations` configurable** (default 50, upstream: inherits main loop's 200 via `_sync_subagent_runtime_limits`). Fork adds `subagentMaxIterations` to `AgentDefaults` config, `subagent_max_iterations` param to `AgentLoop` constructor, and threads it through `commands.py`. **Why**: subagents need more iterations than upstream's 15 but fewer than the main loop's 200; making it configurable avoids hardcoding.
 - **`fail_on_tool_error=False`** (upstream: True). **Why**: transient tool errors should not abort the entire subagent run.
 - **`_announce_result` has no `task` parameter** (upstream includes one). **Why**: task description is already captured elsewhere; omitting it keeps session history compact.
 - **Output storage + tail in `_announce_result`** (upstream: head+tail 1000-char truncation): full output is always written to `data/tool-output/subagent/{task_id}.log`. Only the last 50 lines (`_TAIL_LINES`) are returned to the main agent, with a file path hint appended when truncated. If file write fails (OSError), the announcement still proceeds with the tail but without the file hint. **Why**: the old truncation permanently lost the middle content; file storage lets the main agent read the full output on demand.
@@ -56,6 +57,7 @@ Upstream already has `_get_skill_meta()`, `disabled_skills`, `get_always_skills(
 
 ### 8. Config schema additions (`nanobot/config/schema.py`)
 - `ToolsConfig.bash` (not `exec`) with `BashToolConfig`: adds `bg_ttl`, `bg_max_entries`, `bg_ttl_minutes()` — upstream `ExecToolConfig` lacks these.
+- `AgentDefaults.subagent_max_iterations` (camelCase: `subagentMaxIterations`): separate iteration limit for subagents, default 50. Upstream has no such field; subagents inherit main loop's `max_tool_iterations`.
 - `ToolsConfig.my`: `MyToolConfig` with `enable` and `allow_set`. **Note**: upstream also has `MyToolConfig`, but uses `exec` field name.
 
 ### 9. Provider fixes (upstream does not have these)

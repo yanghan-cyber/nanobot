@@ -79,7 +79,7 @@ class TestSessionManagerSQLite:
         session.messages.append({
             "role": "assistant",
             "content": "",
-            "tool_calls": [{"name": "bash", "arguments": '{"command": "ls"}'}],
+            "tool_calls": [{"function": {"name": "bash", "arguments": '{"command": "ls"}'}}],
         })
         session.messages.append({
             "role": "tool",
