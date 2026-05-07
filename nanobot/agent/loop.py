@@ -265,6 +265,7 @@ class AgentLoop:
             tool_hint_max_length if tool_hint_max_length is not None
             else defaults.tool_hint_max_length
         )
+        self.title_regenerate_interval = defaults.titleRegenerateInterval
         self.web_config = web_config or WebToolsConfig()
         self.bash_config = bash_config or BashToolConfig()
         self.cron_service = cron_service
@@ -953,8 +954,13 @@ class AgentLoop:
         if not session.db_id:
             return
         db = self.sessions._db
-        if db.get_session_title(session.db_id):
-            return
+        existing_title = db.get_session_title(session.db_id)
+        if existing_title:
+            # Check time gap — regenerate if conversation resumed after long idle
+            session_row = db.get_session(session.db_id)
+            last_active = session_row.get("last_active_at") if session_row else None
+            if last_active is not None and time.time() - last_active < self.title_regenerate_interval:
+                return  # Title still fresh
 
         history = session.get_history(
             max_messages=self._max_messages,

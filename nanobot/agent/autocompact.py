@@ -112,9 +112,7 @@ class AutoCompact:
                 )
                 old_title = db.get_session_title(old_db_id)
                 if old_title:
-                    db.set_session_title(
-                        session.db_id, db.get_next_title_in_lineage(old_title)
-                    )
+                    db.set_session_title(session.db_id, old_title)
             session.updated_at = datetime.now()
             self.sessions.save(session)
             if archive_msgs:
