@@ -601,7 +601,7 @@ class SessionDB:
                 cleaned = re.sub(r'\s+', ' ', cleaned).strip()
                 if cleaned:
                     parts.append(cleaned)
-        return ' '.join(parts) if parts else query
+        return ' '.join(parts)
 
     def search_messages(
         self,
@@ -667,5 +667,8 @@ class SessionDB:
         sql += " LIMIT ?"
         params.append(limit)
 
-        cursor = self._conn.execute(sql, tuple(params))
+        try:
+            cursor = self._conn.execute(sql, tuple(params))
+        except sqlite3.OperationalError:
+            return []
         return [dict(row) for row in cursor.fetchall()]
