@@ -21,14 +21,17 @@ _SCHEMA: dict[str, Any] = {
         "query": {
             "type": "string",
             "description": (
-                "Search keyword(s). Supports FTS5 syntax. "
-                "Omit to list recent sessions."
+                "Search keywords for full-text search across all stored messages. "
+                "Supports FTS5 syntax: quoted phrases (\"exact match\"), AND/OR operators. "
+                "Omit to list recent sessions instead."
             ),
         },
         "role_filter": {
             "type": "string",
             "description": (
-                "Comma-separated roles to include (e.g. 'user,assistant')"
+                "Filter messages by role before searching. "
+                "Comma-separated: 'user', 'assistant', 'tool'. "
+                "Example: 'user' to only search user messages."
             ),
         },
         "limit": {
@@ -40,6 +43,35 @@ _SCHEMA: dict[str, Any] = {
 }
 
 _MAX_SESSION_CHARS = 100_000
+_PREVIEW_MAX_LENGTH = 80
+
+_RUNTIME_CTX_START = "[Runtime Context"
+_RUNTIME_CTX_END = "[/Runtime Context]"
+
+
+def _strip_runtime_context(text: str) -> str:
+    """Remove [Runtime Context]...\n[/Runtime Context] blocks from message content."""
+    result = text
+    while True:
+        start = result.find(_RUNTIME_CTX_START)
+        if start == -1:
+            break
+        end = result.find(_RUNTIME_CTX_END, start)
+        if end == -1:
+            break
+        result = result[:start] + result[end + len(_RUNTIME_CTX_END):]
+    return result.strip()
+
+
+def _make_preview(content: str | None, max_len: int = _PREVIEW_MAX_LENGTH) -> str:
+    """Generate a clean preview from user message content."""
+    if not content:
+        return ""
+    cleaned = _strip_runtime_context(content)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    if len(cleaned) > max_len:
+        return cleaned[: max_len - 1] + "…"
+    return cleaned
 
 
 def _format_conversation(messages: list[dict[str, Any]]) -> str:
@@ -166,13 +198,13 @@ class SessionSearchTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Search and browse past conversation sessions.\n"
-            "Two modes:\n"
-            "1. No query: list the most recent sessions.\n"
-            "2. With query: full-text search across all stored messages, "
-            "then summarise each matching session.\n"
-            "Use this to recall past conversations or find previously "
-            "discussed topics."
+            "Search past conversation sessions to recall topics, decisions, or context.\n"
+            "Modes:\n"
+            "1. No query — list recent sessions with previews.\n"
+            "2. With query — full-text search across messages, "
+            "then summarize each matching session.\n"
+            "Use this when the user asks about past conversations, "
+            "wants to recall previous discussions, or needs context from earlier sessions."
         )
 
     @property
@@ -224,24 +256,39 @@ class SessionSearchTool(Tool):
         sessions = self._db.list_recent_sessions(limit=limit + len(exclude_ids), session_key=session_key)
         if not sessions:
             return "No sessions found."
-        lines: list[str] = []
+        results: list[dict[str, Any]] = []
         for s in sessions:
             sid = s.get("id", "?")
             if sid in exclude_ids:
                 continue
+            last_active = s.get("last_active_at") or s.get("started_at", 0)
             started = time.strftime(
                 "%Y-%m-%d %H:%M", time.localtime(s.get("started_at", 0))
             )
-            title = s.get("title") or "(untitled)"
-            model = s.get("model") or "?"
-            msg_count = s.get("message_count", 0)
-            lines.append(
-                f"- [{sid}] {title}  "
-                f"(model: {model}, messages: {msg_count}, started: {started})"
+            active = time.strftime(
+                "%Y-%m-%d %H:%M", time.localtime(last_active)
             )
-            if len(lines) >= limit:
+            title = s.get("title") or "(untitled)"
+            msg_count = s.get("message_count", 0)
+            preview = _make_preview(s.get("preview"))
+            entry: dict[str, Any] = {
+                "session_id": sid,
+                "title": title,
+                "preview": preview,
+                "messages": msg_count,
+                "started": started,
+                "last_active": active,
+            }
+            if self._search_scope == "all":
+                sk = s.get("session_key", "")
+                entry["session_key"] = sk
+                entry["channel"] = sk.split(":")[0] if sk and ":" in sk else ""
+            results.append(entry)
+            if len(results) >= limit:
                 break
-        return "\n".join(lines) if lines else "No sessions found."
+        if not results:
+            return "No sessions found."
+        return json.dumps({"sessions": results}, ensure_ascii=False, indent=2)
 
     # ------------------------------------------------------------------
     # Keyword search + LLM summarisation
@@ -337,7 +384,7 @@ class SessionSearchTool(Tool):
             if self._search_scope == "all":
                 sk = (session_info or {}).get("session_key", "")
                 entry["session_key"] = sk
-                entry["channel"] = sk.split(":")[0] if ":" in sk else sk
+                entry["channel"] = sk.split(":")[0] if sk and ":" in sk else ""
             results.append(entry)
 
         return json.dumps({

@@ -572,21 +572,30 @@ class SessionDB:
         )
 
     def list_recent_sessions(self, limit: int = 10, session_key: str | None = None) -> list[dict]:
-        """List the most recent sessions, ordered by started_at descending."""
+        """List the most recent sessions, ordered by last_active_at descending."""
+        preview_sub = (
+            "SELECT m2.content FROM messages m2 "
+            "WHERE m2.session_id = s.id AND m2.role = 'user' "
+            "ORDER BY m2.created_at DESC LIMIT 1"
+        )
+        select_cols = (
+            "s.id, s.session_key, s.source, s.model, s.title, s.started_at, "
+            "s.last_active_at, s.terminated_at, s.termination_reason, "
+            "s.message_count, s.input_tokens, s.output_tokens, "
+            f"({preview_sub}) AS preview"
+        )
         if session_key:
             cursor = self._conn.execute(
-                "SELECT id, session_key, source, model, title, started_at, "
-                "last_active_at, terminated_at, termination_reason, "
-                "message_count, input_tokens, output_tokens "
-                "FROM sessions WHERE session_key = ? ORDER BY started_at DESC LIMIT ?",
+                f"SELECT {select_cols} "
+                "FROM sessions s WHERE s.session_key = ? "
+                "ORDER BY COALESCE(s.last_active_at, s.started_at) DESC LIMIT ?",
                 (session_key, limit),
             )
         else:
             cursor = self._conn.execute(
-                "SELECT id, session_key, source, model, title, started_at, "
-                "last_active_at, terminated_at, termination_reason, "
-                "message_count, input_tokens, output_tokens "
-                "FROM sessions ORDER BY started_at DESC LIMIT ?",
+                f"SELECT {select_cols} "
+                "FROM sessions s "
+                "ORDER BY COALESCE(s.last_active_at, s.started_at) DESC LIMIT ?",
                 (limit,),
             )
         return [dict(row) for row in cursor.fetchall()]
