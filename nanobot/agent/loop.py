@@ -266,6 +266,7 @@ class AgentLoop:
             else defaults.tool_hint_max_length
         )
         self.title_regenerate_interval = defaults.titleRegenerateInterval
+        self.search_scope = defaults.searchScope
         self.web_config = web_config or WebToolsConfig()
         self.bash_config = bash_config or BashToolConfig()
         self.cron_service = cron_service
@@ -435,9 +436,7 @@ class AgentLoop:
             self.tools.register(
                 CronTool(self.cron_service, default_timezone=self.context.timezone or "UTC")
             )
-        search_scope = "current"
-        if hasattr(self, "_defaults") and self._defaults:
-            search_scope = getattr(self._defaults, "searchScope", "current")
+        search_scope = self.search_scope
         self.tools.register(
             SessionSearchTool(
                 db=self.sessions._db, provider=self.provider, model=self.model,

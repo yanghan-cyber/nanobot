@@ -91,15 +91,17 @@ def _truncate_around_matches(full_text: str, query: str, max_chars: int = _MAX_S
     if not match_positions:
         terms = query_lower.split()
         if len(terms) > 1:
+            from bisect import bisect_left, bisect_right
             term_positions: dict[str, list[int]] = {}
             for t in terms:
-                term_positions[t] = [
+                term_positions[t] = sorted(
                     m.start() for m in re.finditer(re.escape(t), text_lower)
-                ]
+                )
             rarest = min(terms, key=lambda t: len(term_positions.get(t, [])))
             for pos in term_positions.get(rarest, []):
                 if all(
-                    any(abs(p - pos) < 200 for p in term_positions.get(t, []))
+                    bisect_left(term_positions.get(t, []), pos - 200)
+                    < bisect_right(term_positions.get(t, []), pos + 200)
                     for t in terms
                     if t != rarest
                 ):
@@ -117,17 +119,22 @@ def _truncate_around_matches(full_text: str, query: str, max_chars: int = _MAX_S
         suffix = "\n\n...[later conversation truncated]..." if max_chars < len(full_text) else ""
         return truncated + suffix
 
-    # Pick window that covers the most match positions
+    # Pick window that covers the most match positions — O(n) sliding window
     match_positions.sort()
+    from bisect import bisect_left, bisect_right
     best_start = 0
     best_count = 0
-    for candidate in match_positions:
-        ws = max(0, candidate - max_chars // 4)
+    n = len(match_positions)
+    right = 0
+    for left in range(n):
+        anchor = match_positions[left]
+        ws = max(0, anchor - max_chars // 4)
         we = ws + max_chars
         if we > len(full_text):
             ws = max(0, len(full_text) - max_chars)
             we = len(full_text)
-        count = sum(1 for p in match_positions if ws <= p < we)
+        right = bisect_right(match_positions, we - 1, lo=left)
+        count = right - left
         if count > best_count:
             best_count = count
             best_start = ws

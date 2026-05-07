@@ -124,7 +124,7 @@ class AgentDefaults(Base):
         validation_alias=AliasChoices("titleRegenerateInterval"),
         serialization_alias="titleRegenerateInterval",
     )
-    searchScope: str = Field(
+    searchScope: Literal["current", "all"] = Field(
         default="current",
         validation_alias=AliasChoices("searchScope"),
         serialization_alias="searchScope",
