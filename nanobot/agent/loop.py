@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import dataclasses
 import json
 import os
@@ -70,6 +71,10 @@ if TYPE_CHECKING:
 
 
 UNIFIED_SESSION_KEY = "unified:default"
+
+_current_session_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "_current_session_id", default=None
+)
 
 
 class _LoopHook(AgentHook):
@@ -1015,6 +1020,7 @@ class AgentLoop:
             # channel-level session derived from chat_id.
             key = msg.session_key_override or f"{channel}:{chat_id}"
             session = self.sessions.get_or_create(key)
+            _current_session_id.set(session.db_id)
             if self._restore_runtime_checkpoint(session):
                 self.sessions.save(session)
             if self._restore_pending_user_turn(session):
@@ -1139,6 +1145,7 @@ class AgentLoop:
 
         key = session_key or msg.session_key
         session = self.sessions.get_or_create(key)
+        _current_session_id.set(session.db_id)
         mark_webui_session(session, msg.metadata)
         if self._restore_runtime_checkpoint(session):
             self.sessions.save(session)

@@ -118,3 +118,34 @@ class TestSourceRename:
         session = db.get_session("s2")
         assert session["source"] == "main"
         assert session["parent_session_id"] == "s1"
+
+
+class TestCurrentSessionExclusion:
+    """Bug #4: current session appears in results."""
+
+    def test_format_recent_excludes_current_session(self, db: SessionDB):
+        _seed_session(db, "s1", [{"role": "user", "content": "hello"}])
+        _seed_session(db, "s2", [{"role": "user", "content": "world"}])
+
+        from nanobot.agent.tools.session_search import SessionSearchTool
+        tool = SessionSearchTool(db=db, provider=MagicMock(), model="test")
+
+        result = tool._format_recent(limit=5, current_session_id="s2")
+        assert "s1" in result
+        assert "s2" not in result
+
+    def test_format_recent_excludes_lineage(self, db: SessionDB):
+        _seed_session(db, "s1", [{"role": "user", "content": "first"}])
+        _seed_session(db, "s2", [{"role": "user", "content": "second"}])
+        # Make s1 the parent of s2
+        db._conn.execute("UPDATE sessions SET parent_session_id = 's1' WHERE id = 's2'")
+        db._conn.commit()
+        db.update_session("s1", last_active_at=time.time())
+        db.update_session("s2", last_active_at=time.time())
+
+        from nanobot.agent.tools.session_search import SessionSearchTool
+        tool = SessionSearchTool(db=db, provider=MagicMock(), model="test")
+
+        result = tool._format_recent(limit=5, current_session_id="s2")
+        assert "s1" not in result
+        assert "s2" not in result

@@ -91,13 +91,14 @@ class SessionSearchTool(Tool):
         query: str | None = None,
         role_filter: str | None = None,
         limit: int = 5,
-        current_session_id: str | None = None,
         **_kwargs: Any,
     ) -> str:
         limit = max(1, min(20, limit))
+        from nanobot.agent.loop import _current_session_id
+        current_session_id = _current_session_id.get(None)
 
         if not query or not query.strip():
-            return self._format_recent(limit)
+            return self._format_recent(limit, current_session_id)
 
         return await self._search(
             query.strip(), limit, role_filter, current_session_id
@@ -107,24 +108,32 @@ class SessionSearchTool(Tool):
     # Recent sessions
     # ------------------------------------------------------------------
 
-    def _format_recent(self, limit: int) -> str:
-        sessions = self._db.list_recent_sessions(limit=limit)
+    def _format_recent(self, limit: int, current_session_id: str | None = None) -> str:
+        exclude_ids: set[str] = set()
+        if current_session_id:
+            exclude_ids = self._get_lineage_ids(current_session_id)
+
+        sessions = self._db.list_recent_sessions(limit=limit + len(exclude_ids))
         if not sessions:
             return "No sessions found."
         lines: list[str] = []
         for s in sessions:
+            sid = s.get("id", "?")
+            if sid in exclude_ids:
+                continue
             started = time.strftime(
                 "%Y-%m-%d %H:%M", time.localtime(s.get("started_at", 0))
             )
             title = s.get("title") or "(untitled)"
-            sid = s.get("id", "?")
-            model = s.get("model", "?")
+            model = s.get("model") or "?"
             msg_count = s.get("message_count", 0)
             lines.append(
                 f"- [{sid}] {title}  "
                 f"(model: {model}, messages: {msg_count}, started: {started})"
             )
-        return "\n".join(lines)
+            if len(lines) >= limit:
+                break
+        return "\n".join(lines) if lines else "No sessions found."
 
     # ------------------------------------------------------------------
     # Keyword search + LLM summarisation
