@@ -640,7 +640,8 @@ class SessionDB:
                 params: list[Any] = [sanitized]
             else:
                 # LIKE fallback for short CJK queries (1-2 chars)
-                like_term = f"%{query}%"
+                escaped = query.replace("%", "\\%").replace("_", "\\_")
+                like_term = f"%{escaped}%"
                 sql = (
                     "SELECT s.id as session_id, s.source, m.role, m.content, m.created_at"
                     " FROM messages m"
