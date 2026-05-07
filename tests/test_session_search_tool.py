@@ -101,3 +101,20 @@ class TestModelPersistence:
         db.ensure_session("s1", session_key="test:key", source="main", model="other")
         session = db.get_session("s1")
         assert session["model"] == "gpt-4o"
+
+
+class TestSourceRename:
+    """Feature #6: source values are main/subagent, not agent/compression."""
+
+    def test_manager_creates_main_source(self, db: SessionDB):
+        db.create_session("s1", session_key="test:key", source="main")
+        session = db.get_session("s1")
+        assert session["source"] == "main"
+
+    def test_compression_continuation_is_main(self, db: SessionDB):
+        db.create_session("s1", session_key="test:key", source="main")
+        db.end_session("s1", "compression")
+        db.create_session("s2", session_key="test:key", source="main", parent_session_id="s1")
+        session = db.get_session("s2")
+        assert session["source"] == "main"
+        assert session["parent_session_id"] == "s1"
