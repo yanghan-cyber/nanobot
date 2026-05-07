@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import dataclasses
 import json
 import os
@@ -70,6 +71,10 @@ if TYPE_CHECKING:
 
 
 UNIFIED_SESSION_KEY = "unified:default"
+
+_current_session_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "_current_session_id", default=None
+)
 
 
 class _LoopHook(AgentHook):
@@ -260,6 +265,8 @@ class AgentLoop:
             tool_hint_max_length if tool_hint_max_length is not None
             else defaults.tool_hint_max_length
         )
+        self.title_regenerate_interval = defaults.titleRegenerateInterval
+        self.search_scope = defaults.searchScope
         self.web_config = web_config or WebToolsConfig()
         self.bash_config = bash_config or BashToolConfig()
         self.cron_service = cron_service
@@ -429,9 +436,11 @@ class AgentLoop:
             self.tools.register(
                 CronTool(self.cron_service, default_timezone=self.context.timezone or "UTC")
             )
+        search_scope = self.search_scope
         self.tools.register(
             SessionSearchTool(
-                db=self.sessions._db, provider=self.provider, model=self.model
+                db=self.sessions._db, provider=self.provider, model=self.model,
+                search_scope=search_scope,
             )
         )
 
@@ -948,8 +957,13 @@ class AgentLoop:
         if not session.db_id:
             return
         db = self.sessions._db
-        if db.get_session_title(session.db_id):
-            return
+        existing_title = db.get_session_title(session.db_id)
+        if existing_title:
+            # Check time gap — regenerate if conversation resumed after long idle
+            session_row = db.get_session(session.db_id)
+            last_active = session_row.get("last_active_at") if session_row else None
+            if last_active is not None and time.time() - last_active < self.title_regenerate_interval:
+                return  # Title still fresh
 
         history = session.get_history(
             max_messages=self._max_messages,
@@ -1015,6 +1029,7 @@ class AgentLoop:
             # channel-level session derived from chat_id.
             key = msg.session_key_override or f"{channel}:{chat_id}"
             session = self.sessions.get_or_create(key)
+            _current_session_id.set(session.db_id)
             if self._restore_runtime_checkpoint(session):
                 self.sessions.save(session)
             if self._restore_pending_user_turn(session):
@@ -1139,6 +1154,7 @@ class AgentLoop:
 
         key = session_key or msg.session_key
         session = self.sessions.get_or_create(key)
+        _current_session_id.set(session.db_id)
         mark_webui_session(session, msg.metadata)
         if self._restore_runtime_checkpoint(session):
             self.sessions.save(session)

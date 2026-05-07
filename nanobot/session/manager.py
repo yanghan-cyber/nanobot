@@ -437,7 +437,11 @@ class SessionManager:
                 self._db.ensure_session(
                     session.db_id,
                     session_key=session.key,
-                    source="agent",
+                    source="main",
+                    # NOTE: model will be None until agent loop stores it in
+                    # session.metadata["model"].  For now ensure_session keeps
+                    # the existing row's model when the session already exists.
+                    model=session.metadata.get("model"),
                 )
                 for msg in session.messages[session.last_db_flush_idx:]:
                     role = msg.get("role", "")

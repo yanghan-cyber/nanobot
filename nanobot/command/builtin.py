@@ -189,7 +189,7 @@ async def cmd_new(ctx: CommandContext) -> OutboundMessage:
     session.clear()
     session.db_id = generate_session_id()
     session.last_db_flush_idx = 0
-    loop.sessions._db.create_session(session.db_id, session_key=ctx.key, source="agent")
+    loop.sessions._db.create_session(session.db_id, session_key=ctx.key, source="main")
     loop.invalidate_frozen_prompt(session.key)
     # Save cleared state to JSONL, then invalidate cache
     loop.sessions.save(session)

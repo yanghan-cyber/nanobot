@@ -370,7 +370,7 @@ class SessionDB:
         session_id: str,
         *,
         session_key: str,
-        source: str = "agent",
+        source: str = "main",
         model: str | None = None,
         user_id: str | None = None,
         parent_session_id: str | None = None,
@@ -388,7 +388,7 @@ class SessionDB:
         session_id: str,
         *,
         session_key: str,
-        source: str = "agent",
+        source: str = "main",
         model: str | None = None,
         user_id: str | None = None,
         parent_session_id: str | None = None,
@@ -571,15 +571,24 @@ class SessionDB:
             (input_tokens, output_tokens, cache_read_tokens, session_id),
         )
 
-    def list_recent_sessions(self, limit: int = 10) -> list[dict]:
+    def list_recent_sessions(self, limit: int = 10, session_key: str | None = None) -> list[dict]:
         """List the most recent sessions, ordered by started_at descending."""
-        cursor = self._conn.execute(
-            "SELECT id, session_key, source, model, title, started_at, "
-            "last_active_at, terminated_at, termination_reason, "
-            "message_count, input_tokens, output_tokens "
-            "FROM sessions ORDER BY started_at DESC LIMIT ?",
-            (limit,),
-        )
+        if session_key:
+            cursor = self._conn.execute(
+                "SELECT id, session_key, source, model, title, started_at, "
+                "last_active_at, terminated_at, termination_reason, "
+                "message_count, input_tokens, output_tokens "
+                "FROM sessions WHERE session_key = ? ORDER BY started_at DESC LIMIT ?",
+                (session_key, limit),
+            )
+        else:
+            cursor = self._conn.execute(
+                "SELECT id, session_key, source, model, title, started_at, "
+                "last_active_at, terminated_at, termination_reason, "
+                "message_count, input_tokens, output_tokens "
+                "FROM sessions ORDER BY started_at DESC LIMIT ?",
+                (limit,),
+            )
         return [dict(row) for row in cursor.fetchall()]
 
     @staticmethod
@@ -601,7 +610,7 @@ class SessionDB:
                 cleaned = re.sub(r'\s+', ' ', cleaned).strip()
                 if cleaned:
                     parts.append(cleaned)
-        return ' '.join(parts) if parts else query
+        return ' '.join(parts)
 
     def search_messages(
         self,
@@ -609,6 +618,7 @@ class SessionDB:
         *,
         role_filter: list[str] | None = None,
         exclude_sources: list[str] | None = None,
+        session_key: str | None = None,
         limit: int = 20,
     ) -> list[dict[str, Any]]:
         """Search messages using FTS5, with CJK trigram and LIKE fallback."""
@@ -630,7 +640,8 @@ class SessionDB:
                 params: list[Any] = [sanitized]
             else:
                 # LIKE fallback for short CJK queries (1-2 chars)
-                like_term = f"%{query}%"
+                escaped = query.replace("%", "\\%").replace("_", "\\_")
+                like_term = f"%{escaped}%"
                 sql = (
                     "SELECT s.id as session_id, s.source, m.role, m.content, m.created_at"
                     " FROM messages m"
@@ -659,6 +670,10 @@ class SessionDB:
             sql += f" AND s.source NOT IN ({placeholders})"
             params.extend(exclude_sources)
 
+        if session_key:
+            sql += " AND s.session_key = ?"
+            params.append(session_key)
+
         if _contains_cjk(query) and _count_cjk(query) < 3:
             sql += " ORDER BY m.created_at DESC"
         else:
@@ -667,5 +682,8 @@ class SessionDB:
         sql += " LIMIT ?"
         params.append(limit)
 
-        cursor = self._conn.execute(sql, tuple(params))
+        try:
+            cursor = self._conn.execute(sql, tuple(params))
+        except sqlite3.OperationalError:
+            return []
         return [dict(row) for row in cursor.fetchall()]

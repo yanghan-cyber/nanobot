@@ -1,0 +1,201 @@
+"""Tests for SessionSearchTool bug fixes and features."""
+
+import json
+import sqlite3
+import time
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from nanobot.session.db import SessionDB
+
+
+@pytest.fixture
+def db(tmp_path: Path) -> SessionDB:
+    return SessionDB(tmp_path / "test.db")
+
+
+def _seed_session(db: SessionDB, session_id: str, messages: list[dict] | None = None) -> None:
+    """Helper: create a session and optionally append messages."""
+    db.create_session(session_id, session_key="test:key", source="main", model="test-model")
+    for msg in messages or []:
+        db.append_message(session_id, **msg)
+
+
+class TestFTSSanitization:
+    """Bug #3: query: '*' crashes with OperationalError."""
+
+    def test_star_query_returns_empty_not_crash(self, db: SessionDB):
+        _seed_session(db, "s1", [
+            {"role": "user", "content": "hello world"},
+        ])
+        results = db.search_messages("*")
+        assert isinstance(results, list)
+
+    def test_empty_query_returns_empty(self, db: SessionDB):
+        _seed_session(db, "s1", [
+            {"role": "user", "content": "hello world"},
+        ])
+        results = db.search_messages("")
+        assert results == []
+
+    def test_whitespace_query_returns_empty(self, db: SessionDB):
+        _seed_session(db, "s1", [
+            {"role": "user", "content": "hello world"},
+        ])
+        results = db.search_messages("   ")
+        assert results == []
+
+    def test_special_chars_only_returns_empty(self, db: SessionDB):
+        _seed_session(db, "s1", [
+            {"role": "user", "content": "hello world"},
+        ])
+        results = db.search_messages("!@#$%")
+        assert isinstance(results, list)
+
+    def test_valid_query_still_works(self, db: SessionDB):
+        _seed_session(db, "s1", [
+            {"role": "user", "content": "hello world"},
+        ])
+        results = db.search_messages("hello")
+        assert len(results) == 1
+        assert results[0]["session_id"] == "s1"
+
+
+class TestLimitCap:
+    """Bug #2: limit hard-capped at 5."""
+
+    def test_limit_above_20_clamped_to_20(self, db: SessionDB):
+        """Tool should accept limit up to 20."""
+        from nanobot.agent.tools.session_search import SessionSearchTool
+        tool = SessionSearchTool(db=db, provider=MagicMock(), model="test")
+        schema = tool.parameters
+        assert schema["properties"]["limit"]["description"] == "Max sessions to return (1-20, default 5)."
+
+    def test_search_messages_accepts_custom_limit(self, db: SessionDB):
+        """search_messages should use the caller-provided limit, not hardcoded 20."""
+        for i in range(25):
+            _seed_session(db, f"s{i}", [
+                {"role": "user", "content": f"unique keyword alpha {i}"},
+            ])
+        results = db.search_messages("alpha", limit=25)
+        assert len(results) == 25
+
+
+class TestModelPersistence:
+    """Bug #1: model is always NULL in sessions table."""
+
+    def test_model_stored_on_create(self, db: SessionDB):
+        db.create_session("s1", session_key="test:key", source="main", model="gpt-4o")
+        session = db.get_session("s1")
+        assert session["model"] == "gpt-4o"
+
+    def test_model_stored_via_ensure_session(self, db: SessionDB):
+        db.ensure_session("s1", session_key="test:key", source="main", model="claude-4")
+        session = db.get_session("s1")
+        assert session["model"] == "claude-4"
+
+    def test_ensure_session_preserves_existing_model(self, db: SessionDB):
+        db.create_session("s1", session_key="test:key", source="main", model="gpt-4o")
+        db.ensure_session("s1", session_key="test:key", source="main", model="other")
+        session = db.get_session("s1")
+        assert session["model"] == "gpt-4o"
+
+
+class TestSourceRename:
+    """Feature #6: source values are main/subagent, not agent/compression."""
+
+    def test_manager_creates_main_source(self, db: SessionDB):
+        db.create_session("s1", session_key="test:key", source="main")
+        session = db.get_session("s1")
+        assert session["source"] == "main"
+
+    def test_compression_continuation_is_main(self, db: SessionDB):
+        db.create_session("s1", session_key="test:key", source="main")
+        db.end_session("s1", "compression")
+        db.create_session("s2", session_key="test:key", source="main", parent_session_id="s1")
+        session = db.get_session("s2")
+        assert session["source"] == "main"
+        assert session["parent_session_id"] == "s1"
+
+
+class TestCurrentSessionExclusion:
+    """Bug #4: current session appears in results."""
+
+    def test_format_recent_excludes_current_session(self, db: SessionDB):
+        _seed_session(db, "s1", [{"role": "user", "content": "hello"}])
+        _seed_session(db, "s2", [{"role": "user", "content": "world"}])
+
+        from nanobot.agent.tools.session_search import SessionSearchTool
+        tool = SessionSearchTool(db=db, provider=MagicMock(), model="test")
+
+        result = tool._format_recent(limit=5, current_session_id="s2")
+        assert "s1" in result
+        assert "s2" not in result
+
+    def test_format_recent_excludes_lineage(self, db: SessionDB):
+        _seed_session(db, "s1", [{"role": "user", "content": "first"}])
+        _seed_session(db, "s2", [{"role": "user", "content": "second"}])
+        # Make s1 the parent of s2
+        db._conn.execute("UPDATE sessions SET parent_session_id = 's1' WHERE id = 's2'")
+        db._conn.commit()
+        db.update_session("s1", last_active_at=time.time())
+        db.update_session("s2", last_active_at=time.time())
+
+        from nanobot.agent.tools.session_search import SessionSearchTool
+        tool = SessionSearchTool(db=db, provider=MagicMock(), model="test")
+
+        result = tool._format_recent(limit=5, current_session_id="s2")
+        assert "s1" not in result
+        assert "s2" not in result
+
+
+class TestSearchScope:
+    """Feature #6: search_scope filters by session_key."""
+
+    def test_search_filters_by_session_key(self, db: SessionDB):
+        _seed_session(db, "s1", [
+            {"role": "user", "content": "hello from feishu"},
+        ])
+        db._conn.execute("UPDATE sessions SET session_key = 'feishu:user1' WHERE id = 's1'")
+        db._conn.commit()
+
+        _seed_session(db, "s2", [
+            {"role": "user", "content": "hello from cli"},
+        ])
+        db._conn.execute("UPDATE sessions SET session_key = 'cli_direct' WHERE id = 's2'")
+        db._conn.commit()
+
+        results = db.search_messages("hello", session_key="feishu:user1")
+        assert len(results) == 1
+        assert results[0]["session_id"] == "s1"
+
+    def test_search_all_scope(self, db: SessionDB):
+        _seed_session(db, "s1", [
+            {"role": "user", "content": "hello from feishu"},
+        ])
+        db._conn.execute("UPDATE sessions SET session_key = 'feishu:user1' WHERE id = 's1'")
+        db._conn.commit()
+
+        _seed_session(db, "s2", [
+            {"role": "user", "content": "hello from cli"},
+        ])
+        db._conn.execute("UPDATE sessions SET session_key = 'cli_direct' WHERE id = 's2'")
+        db._conn.commit()
+
+        results = db.search_messages("hello", session_key=None)
+        assert len(results) == 2
+
+    def test_list_recent_filters_by_session_key(self, db: SessionDB):
+        _seed_session(db, "s1", [])
+        db._conn.execute("UPDATE sessions SET session_key = 'feishu:user1' WHERE id = 's1'")
+        db._conn.commit()
+
+        _seed_session(db, "s2", [])
+        db._conn.execute("UPDATE sessions SET session_key = 'cli_direct' WHERE id = 's2'")
+        db._conn.commit()
+
+        sessions = db.list_recent_sessions(limit=10, session_key="feishu:user1")
+        assert len(sessions) == 1
+        assert sessions[0]["id"] == "s1"

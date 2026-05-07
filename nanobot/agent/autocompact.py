@@ -99,19 +99,20 @@ class AutoCompact:
                 db = self.sessions._db
                 db.end_session(session.db_id, "compression")
                 old_db_id = session.db_id
+                old_session = db.get_session(old_db_id)
+                parent_model = old_session.get("model") if old_session else None
                 session.db_id = generate_session_id()
                 session.last_db_flush_idx = 0
                 db.create_session(
                     session.db_id,
                     session_key=key,
-                    source="compression",
+                    source="main",
                     parent_session_id=old_db_id,
+                    model=parent_model,
                 )
                 old_title = db.get_session_title(old_db_id)
                 if old_title:
-                    db.set_session_title(
-                        session.db_id, db.get_next_title_in_lineage(old_title)
-                    )
+                    db.set_session_title(session.db_id, old_title)
             session.updated_at = datetime.now()
             self.sessions.save(session)
             if archive_msgs:

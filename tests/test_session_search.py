@@ -91,11 +91,16 @@ class TestSessionSearchKeyword:
     async def test_keyword_search_excludes_current_session_lineage(
         self, tool: SessionSearchTool, db: SessionDB
     ) -> None:
-        db.create_session("s1", session_key="cli:direct", source="agent")
+        from nanobot.agent.loop import _current_session_id
+        db.create_session("s1", session_key="cli:direct", source="main")
         db.append_message("s1", role="user", content="docker deployment")
-        db.create_session("s2", session_key="cli:direct", source="agent", parent_session_id="s1")
+        db.create_session("s2", session_key="cli:direct", source="main", parent_session_id="s1")
         db.append_message("s2", role="user", content="kubernetes deployment")
-        result = await tool.execute(query="docker", current_session_id="s2")
+        _current_session_id.set("s2")
+        try:
+            result = await tool.execute(query="docker")
+        finally:
+            _current_session_id.set(None)
         parsed = json.loads(result)
         assert all(r["session_id"] not in ("s1", "s2") for r in parsed["results"])
 
