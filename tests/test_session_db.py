@@ -169,15 +169,16 @@ class TestTitleManagement:
 
 
 class TestTokenCounts:
-    def test_update_token_counts_additive(self, tmp_path: Path) -> None:
+    def test_update_token_counts_last_turn(self, tmp_path: Path) -> None:
         db = SessionDB(tmp_path / "state.db")
         db.create_session("sess_001", session_key="cli:direct", source="agent")
         db.update_token_counts("sess_001", input_tokens=100, output_tokens=50, cache_read_tokens=20)
         db.update_token_counts("sess_001", input_tokens=30, output_tokens=10, cache_read_tokens=5)
         row = db.get_session("sess_001")
-        assert row["input_tokens"] == 130
-        assert row["output_tokens"] == 60
-        assert row["cache_read_tokens"] == 25
+        # Last turn values overwrite, not accumulate — matches /status behavior
+        assert row["input_tokens"] == 30
+        assert row["output_tokens"] == 10
+        assert row["cache_read_tokens"] == 5
 
 
 class TestListRecentSessions:

@@ -1027,6 +1027,7 @@ class AgentLoop:
             # channel-level session derived from chat_id.
             key = msg.session_key_override or f"{channel}:{chat_id}"
             session = self.sessions.get_or_create(key)
+            session.metadata["model"] = self.model
             _current_session_id.set(session.db_id)
             if self._restore_runtime_checkpoint(session):
                 self.sessions.save(session)
@@ -1116,6 +1117,7 @@ class AgentLoop:
                     active_db_id,
                     input_tokens=self._last_usage.get("prompt_tokens", 0),
                     output_tokens=self._last_usage.get("completion_tokens", 0),
+                    cache_read_tokens=self._last_usage.get("cached_tokens", 0),
                 )
             self._schedule_background(
                 self.consolidator.maybe_consolidate_by_tokens(
@@ -1158,6 +1160,7 @@ class AgentLoop:
 
         key = session_key or msg.session_key
         session = self.sessions.get_or_create(key)
+        session.metadata["model"] = self.model
         _current_session_id.set(session.db_id)
         mark_webui_session(session, msg.metadata)
         if self._restore_runtime_checkpoint(session):
@@ -1306,6 +1309,7 @@ class AgentLoop:
                 active_db_id,
                 input_tokens=self._last_usage.get("prompt_tokens", 0),
                 output_tokens=self._last_usage.get("completion_tokens", 0),
+                cache_read_tokens=self._last_usage.get("cached_tokens", 0),
             )
         self._schedule_background(
             self.consolidator.maybe_consolidate_by_tokens(

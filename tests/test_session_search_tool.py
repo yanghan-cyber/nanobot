@@ -96,9 +96,15 @@ class TestModelPersistence:
         session = db.get_session("s1")
         assert session["model"] == "claude-4"
 
-    def test_ensure_session_preserves_existing_model(self, db: SessionDB):
+    def test_ensure_session_updates_model(self, db: SessionDB):
         db.create_session("s1", session_key="test:key", source="main", model="gpt-4o")
         db.ensure_session("s1", session_key="test:key", source="main", model="other")
+        session = db.get_session("s1")
+        assert session["model"] == "other"
+
+    def test_ensure_session_keeps_model_when_none_passed(self, db: SessionDB):
+        db.create_session("s1", session_key="test:key", source="main", model="gpt-4o")
+        db.ensure_session("s1", session_key="test:key", source="main", model=None)
         session = db.get_session("s1")
         assert session["model"] == "gpt-4o"
 

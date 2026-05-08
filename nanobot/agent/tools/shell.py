@@ -295,20 +295,22 @@ _WORKSPACE_BOUNDARY_NOTE = (
         timeout=IntegerSchema(
             60,
             description=(
-                "Timeout in seconds for foreground commands only "
-                "(default 60, max 600). "
-                "Ignored when run_in_background=True — background tasks "
-                "run until completion with no execution timeout."
+                "Max runtime in seconds for foreground commands only "
+                "(default 60, max 600). Set this when a foreground command "
+                "needs more time — e.g., 300 for npm install, 600 for a "
+                "large clone. Does not apply to background tasks."
             ),
             minimum=1,
             maximum=600,
         ),
         run_in_background=BooleanSchema(
             description=(
-                "Run command in background. Returns a bg_id for tracking. "
-                "Background tasks have no execution timeout — they run until "
-                "completion. Completed task metadata is cleaned up after TTL "
-                "(default 2h)."
+                "Run command in background and return immediately so you can "
+                "continue working without waiting. Returns a bg_id — use "
+                "shell_bg to check status, read output, or get notified on "
+                "completion. No execution timeout — background tasks run until "
+                "done or TTL expiry. Use for any command where waiting isn't "
+                "necessary: builds, installs, long downloads, test runs, etc."
             ),
             default=False,
         ),
@@ -421,9 +423,10 @@ class BashTool(Tool):
             "default to using the dedicated tool and only fallback on using this tool "
             "when it is absolutely necessary.\n"
             "\n"
-            "Output is truncated at 10,000 chars. Timeout defaults to 60s (max 600s). "
-            "Use run_in_background=true for long-running commands like servers, builds, "
-            "or watches — returns a bg_id for tracking with shell_bg."
+            "Output is truncated at 10,000 chars. "
+            "For foreground commands that need more than 60s, set a longer timeout. "
+            "To avoid blocking on long commands, use run_in_background=true and "
+            "check results later via shell_bg."
         )
 
     @property

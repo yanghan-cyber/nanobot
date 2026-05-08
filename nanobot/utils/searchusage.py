@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
 from typing import Any
@@ -109,6 +110,15 @@ async def _fetch_tavily_usage(api_key: str | None) -> SearchUsageInfo:
                 headers={"Authorization": f"Bearer {key}"},
             )
             r.raise_for_status()
+        # AWS WAF may intercept with a 202 challenge (empty body)
+        waf_action = r.headers.get("x-amzn-waf-action")
+        if not r.text.strip():
+            reason = f"blocked by WAF ({waf_action})" if waf_action else "empty response"
+            return SearchUsageInfo(
+                provider="tavily",
+                supported=True,
+                error=reason,
+            )
         data: dict[str, Any] = r.json()
         return _parse_tavily_usage(data)
     except httpx.HTTPStatusError as e:
@@ -116,6 +126,12 @@ async def _fetch_tavily_usage(api_key: str | None) -> SearchUsageInfo:
             provider="tavily",
             supported=True,
             error=f"HTTP {e.response.status_code}",
+        )
+    except json.JSONDecodeError:
+        return SearchUsageInfo(
+            provider="tavily",
+            supported=True,
+            error="API returned malformed response",
         )
     except Exception as e:
         return SearchUsageInfo(

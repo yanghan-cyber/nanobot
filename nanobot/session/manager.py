@@ -438,9 +438,9 @@ class SessionManager:
                     session.db_id,
                     session_key=session.key,
                     source="main",
-                    # NOTE: model will be None until agent loop stores it in
-                    # session.metadata["model"].  For now ensure_session keeps
-                    # the existing row's model when the session already exists.
+                    # NOTE: model is set from session.metadata["model"]
+                    # (populated by AgentLoop._process_message).
+                    # ensure_session updates the DB row when the model changes.
                     model=session.metadata.get("model"),
                 )
                 for msg in session.messages[session.last_db_flush_idx:]:

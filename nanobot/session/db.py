@@ -393,7 +393,11 @@ class SessionDB:
         user_id: str | None = None,
         parent_session_id: str | None = None,
     ) -> None:
-        """Create a session only if it doesn't already exist."""
+        """Create a session only if it doesn't already exist.
+
+        When *model* is provided and the session already exists, the model
+        column is updated so the DB reflects the current active model.
+        """
         existing = self.get_session(session_id)
         if existing is None:
             self.create_session(
@@ -404,6 +408,8 @@ class SessionDB:
                 user_id=user_id,
                 parent_session_id=parent_session_id,
             )
+        elif model is not None and existing["model"] != model:
+            self.update_session(session_id, model=model)
 
     def end_session(self, session_id: str, termination_reason: str) -> None:
         """Mark a session as terminated with the given reason.
@@ -562,11 +568,11 @@ class SessionDB:
         output_tokens: int = 0,
         cache_read_tokens: int = 0,
     ) -> None:
-        """Additively update token counts for a session."""
+        """Update token counts for a session (last turn values, not cumulative)."""
         self._execute_write(
-            "UPDATE sessions SET input_tokens = input_tokens + ?, "
-            "output_tokens = output_tokens + ?, "
-            "cache_read_tokens = cache_read_tokens + ? "
+            "UPDATE sessions SET input_tokens = ?, "
+            "output_tokens = ?, "
+            "cache_read_tokens = ? "
             "WHERE id = ?",
             (input_tokens, output_tokens, cache_read_tokens, session_id),
         )

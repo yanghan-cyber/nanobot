@@ -208,7 +208,7 @@ class SubagentManager:
             tools.register(GlobTool(workspace=self.workspace, allowed_dir=allowed_dir, file_states=file_states))
             tools.register(GrepTool(workspace=self.workspace, allowed_dir=allowed_dir, file_states=file_states))
             if self.bash_config.enable:
-                tools.register(BashTool(
+                bash_tool = BashTool(
                     working_dir=str(self.workspace),
                     timeout=self.bash_config.timeout,
                     restrict_to_workspace=self.restrict_to_workspace,
@@ -217,11 +217,24 @@ class SubagentManager:
                     allowed_env_keys=self.bash_config.allowed_env_keys,
                     allow_patterns=self.bash_config.allow_patterns,
                     deny_patterns=self.bash_config.deny_patterns,
-                ))
-                tools.register(ShellBgTool(
+                )
+                bash_bg_tool = ShellBgTool(
                     bg_ttl_minutes=self.bash_config.bg_ttl_minutes(),
                     bg_max_entries=self.bash_config.bg_max_entries,
-                ))
+                )
+                if session_key:
+                    bash_tool.set_context(
+                        bus=self.bus, channel=origin.get("channel", "cli"),
+                        chat_id=origin.get("chat_id", "direct"),
+                        session_key=session_key,
+                    )
+                    bash_bg_tool.set_context(
+                        bus=self.bus, channel=origin.get("channel", "cli"),
+                        chat_id=origin.get("chat_id", "direct"),
+                        session_key=session_key,
+                    )
+                tools.register(bash_tool)
+                tools.register(bash_bg_tool)
             if self.web_config.enable:
                 tools.register(
                     WebSearchTool(
@@ -463,7 +476,6 @@ class SubagentManager:
             response = await self.provider.chat_with_retry(
                 model=self.model,
                 messages=messages,
-                max_tokens=32,
                 temperature=0.2,
             )
 
@@ -472,9 +484,9 @@ class SubagentManager:
                 if title:
                     db = self.sessions._db
                     db.set_session_title(session_id, title)
-                    logger.debug("Generated subagent title: {}", title)
+                    logger.info("Generated subagent title: {}", title)
         except Exception:
-            logger.debug("Failed to generate subagent title", exc_info=True)
+            logger.warning("Failed to generate subagent title", exc_info=True)
 
     def _build_subagent_prompt(self, skills_loader: SkillsLoader | None = None) -> str:
         """Build a focused system prompt for the subagent."""
