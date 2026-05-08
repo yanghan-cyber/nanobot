@@ -456,3 +456,21 @@ class SubagentManager:
             1 for tid in tids
             if tid in self._running_tasks and not self._running_tasks[tid].done()
         )
+
+    def get_session_status(self, session_key: str) -> str:
+        """Return a human-readable summary of running subagents for a session."""
+        tids = self._session_tasks.get(session_key, set())
+        running = [
+            self._task_statuses[tid]
+            for tid in tids
+            if tid in self._task_statuses
+            and tid in self._running_tasks
+            and not self._running_tasks[tid].done()
+        ]
+        if not running:
+            return ""
+        lines = [f"subagents: {len(running)} running"]
+        for st in running:
+            elapsed = int(time.monotonic() - st.started_at)
+            lines.append(f"  [{st.task_id}] {st.label}  phase={st.phase} iter={st.iteration} elapsed={elapsed}s")
+        return "\n".join(lines)

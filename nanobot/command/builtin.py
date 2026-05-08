@@ -156,6 +156,17 @@ async def cmd_status(ctx: CommandContext) -> OutboundMessage:
     task_count = sum(1 for t in active_tasks if not t.done())
     with suppress(Exception):
         task_count += loop.subagents.get_running_count_by_session(ctx.key)
+
+    # Collect bg task and subagent status for display
+    bg_status_text: str | None = None
+    with suppress(Exception):
+        shell_bg = loop.tools.get("shell_bg")
+        if shell_bg:
+            bg_status_text = shell_bg.get_status_summary(session_key=ctx.key) or None
+    subagent_status_text: str | None = None
+    with suppress(Exception):
+        subagent_status_text = loop.subagents.get_session_status(ctx.key) or None
+
     return OutboundMessage(
         channel=ctx.msg.channel,
         chat_id=ctx.msg.chat_id,
@@ -170,6 +181,8 @@ async def cmd_status(ctx: CommandContext) -> OutboundMessage:
             max_completion_tokens=getattr(
                 getattr(loop.provider, "generation", None), "max_tokens", 8192
             ),
+            bg_status_text=bg_status_text,
+            subagent_status_text=subagent_status_text,
         ),
         metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
     )

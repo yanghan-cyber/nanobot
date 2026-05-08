@@ -904,6 +904,29 @@ class ShellBgTool(Tool):
             return meta
         return None
 
+    # -- status summary (sync, for /status) ---------------------------------
+
+    def get_status_summary(self, session_key: str | None = None) -> str:
+        """Return a one-shot summary of active bg tasks for the given session.
+
+        Sync and lock-free: reads ``_bg_meta`` directly (asyncio single-threaded).
+        Falls back to the ContextVar session key if *session_key* is None.
+        """
+        current_session = session_key or self._session_key.get()
+        active = {
+            bg_id: m
+            for bg_id, m in _bg_meta.items()
+            if m.get("session_key") == current_session and m.get("status") == "running"
+        }
+        if not active:
+            return ""
+        lines = [f"bg tasks: {len(active)} running"]
+        for bg_id, m in active.items():
+            lines.append(
+                f"  [{bg_id}] command={m['command']}  purpose={m.get('purpose', '')}"
+            )
+        return "\n".join(lines)
+
     # -- output -------------------------------------------------------------
 
     async def _output(self, bash_bg_id: str) -> str:

@@ -497,6 +497,8 @@ def build_status_content(
     search_usage_text: str | None = None,
     active_task_count: int = 0,
     max_completion_tokens: int = 8192,
+    bg_status_text: str | None = None,
+    subagent_status_text: str | None = None,
 ) -> str:
     """Build a human-readable runtime status snapshot.
 
@@ -538,6 +540,10 @@ def build_status_content(
     ]
     if search_usage_text:
         lines.append(search_usage_text)
+    if bg_status_text:
+        lines.append(f"\U0001f4bb {bg_status_text}")
+    if subagent_status_text:
+        lines.append(f"\U0001f916 {subagent_status_text}")
     return "\n".join(lines)
 
 
