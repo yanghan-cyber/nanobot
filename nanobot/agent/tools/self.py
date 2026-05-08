@@ -396,8 +396,36 @@ class MyTool(Tool):
         setattr(self._loop, key, value)
         if key == "max_iterations" and hasattr(self._loop, "_sync_subagent_runtime_limits"):
             self._loop._sync_subagent_runtime_limits()
+        if key == "model":
+            self._propagate_model_change(value)
         self._audit("modify", f"{key}: {old!r} -> {value!r}")
         return f"Set {key} = {value!r} (was {old!r})"
+
+    def _propagate_model_change(self, model: str) -> None:
+        """Push a model change to background components that cache it.
+
+        Runner is intentionally omitted: it reads ``loop.model`` fresh each
+        turn.  Only components with their own cached model need explicit
+        updates.
+        """
+        loop = self._loop
+        provider = loop.provider
+        # Heartbeat
+        hb = getattr(loop, "_heartbeat", None)
+        if hb is not None:
+            hb.set_model(model)
+        # Consolidator
+        cons = getattr(loop, "consolidator", None)
+        if cons is not None and hasattr(cons, "set_provider"):
+            cons.set_provider(provider, model, loop.context_window_tokens)
+        # Dream
+        dream = getattr(loop, "dream", None)
+        if dream is not None and hasattr(dream, "set_provider"):
+            dream.set_provider(provider, model)
+        # Subagent manager (used by _generate_subagent_title)
+        sub = getattr(loop, "subagents", None)
+        if sub is not None and hasattr(sub, "set_provider"):
+            sub.set_provider(provider, model)
 
     def _modify_free(self, key: str, value: Any) -> str:
         if _has_real_attr(self._loop, key):

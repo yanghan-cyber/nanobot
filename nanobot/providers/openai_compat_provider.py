@@ -576,9 +576,7 @@ class OpenAICompatProvider(LLMProvider):
             and ((spec and spec.thinking_style) or _is_kimi_thinking_model(model_name))
         )
         implicit_deepseek_thinking = (
-            spec is not None
-            and spec.name == "deepseek"
-            and semantic_effort not in ("none", "minimal", "minimum")
+            semantic_effort not in ("none", "minimal", "minimum")
             and any(t in model_name.lower() for t in ("deepseek-v4", "deepseek-reasoner"))
         )
         if explicit_thinking or implicit_deepseek_thinking or messages_have_reasoning:

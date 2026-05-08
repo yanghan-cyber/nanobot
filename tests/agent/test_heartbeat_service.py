@@ -287,3 +287,43 @@ async def test_decide_prompt_includes_current_time(tmp_path) -> None:
     assert user_msg["role"] == "user"
     assert "Current Time:" in user_msg["content"]
 
+
+@pytest.mark.asyncio
+async def test_set_model_updates_model_for_decide(tmp_path) -> None:
+    """HeartbeatService.set_model() must update the model used by _decide().
+
+    Regression: after `my set model`, HeartbeatService continued using the
+    old model captured at startup.
+    """
+    captured_models: list[str | None] = []
+
+    class ModelCapturingProvider(LLMProvider):
+        async def chat(self, *, model=None, **kwargs) -> LLMResponse:
+            captured_models.append(model)
+            return LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCallRequest(
+                        id="hb_1", name="heartbeat",
+                        arguments={"action": "skip"},
+                    )
+                ],
+            )
+
+        def get_default_model(self) -> str:
+            return "old-model"
+
+    service = HeartbeatService(
+        workspace=tmp_path,
+        provider=ModelCapturingProvider(),
+        model="old-model",
+    )
+
+    await service._decide("tasks")
+    assert captured_models == ["old-model"]
+
+    service.set_model("deepseek-v4-flash")
+
+    await service._decide("tasks")
+    assert captured_models == ["old-model", "deepseek-v4-flash"]
+

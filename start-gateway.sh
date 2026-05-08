@@ -42,6 +42,11 @@ case "${1:-}" in
       rm -f "$NOTICE_FILE"
     fi
 
+    # Disable OpenTelemetry export to avoid noisy warnings when no collector is running
+    export OTEL_TRACES_EXPORTER=none
+    export OTEL_METRICS_EXPORTER=none
+    export OTEL_LOGS_EXPORTER=none
+
     nohup "$UV" run --directory "$WORKDIR" nanobot gateway >> "$LOG_FILE" 2>&1 &
     echo $! > "$PID_FILE"
     echo "gateway started (PID $!), log: $LOG_FILE"

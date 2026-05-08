@@ -795,6 +795,13 @@ def _run_gateway(
 
         response = resp.content if resp else ""
 
+        # Terminate the session for one-shot ("at") cron jobs so it
+        # doesn't remain permanently "active" in the session list.
+        if job.schedule.kind == "at":
+            session_key = f"cron:{job.id}"
+            session = agent.sessions.get_or_create(session_key)
+            agent.sessions._db.end_session(session.db_id, "cron_completed")
+
         if job.payload.deliver and isinstance(message_tool, MessageTool) and message_tool._sent_in_turn:
             return response
 
@@ -898,6 +905,7 @@ def _run_gateway(
         enabled=hb_cfg.enabled,
         timezone=config.agents.defaults.timezone,
     )
+    agent._heartbeat = heartbeat
 
     if channels.enabled_channels:
         console.print(f"[green]✓[/green] Channels enabled: {', '.join(channels.enabled_channels)}")

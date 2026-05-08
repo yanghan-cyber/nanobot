@@ -72,6 +72,10 @@ class HeartbeatService:
         self._running = False
         self._task: asyncio.Task | None = None
 
+    def set_model(self, model: str) -> None:
+        """Update the model used for heartbeat LLM calls (hot-swap)."""
+        self.model = model
+
     @property
     def heartbeat_file(self) -> Path:
         return self.workspace / "HEARTBEAT.md"

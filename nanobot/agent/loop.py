@@ -68,6 +68,7 @@ if TYPE_CHECKING:
         WebToolsConfig,
     )
     from nanobot.cron.service import CronService
+    from nanobot.heartbeat.service import HeartbeatService
 
 
 UNIFIED_SESSION_KEY = "unified:default"
@@ -335,6 +336,7 @@ class AgentLoop:
             provider=provider,
             model=self.model,
         )
+        self._heartbeat: HeartbeatService | None = None  # set by commands.py after construction
         self._register_default_tools()
         if _tc.my.enable:
             self.tools.register(MyTool(loop=self, modify_allowed=_tc.my.allow_set))
@@ -363,6 +365,8 @@ class AgentLoop:
         self.subagents.set_provider(provider, model)
         self.consolidator.set_provider(provider, model, context_window_tokens)
         self.dream.set_provider(provider, model)
+        if self._heartbeat is not None:
+            self._heartbeat.set_model(model)
         self._provider_signature = snapshot.signature
         logger.info("Runtime model switched for next turn: {} -> {}", old_model, model)
 
@@ -1309,7 +1313,7 @@ class AgentLoop:
                 for m in session.messages[: session.last_db_flush_idx]
                 if m.get("role") == "user"
             )
-            if 1 <= user_msg_count <= 2:
+            if user_msg_count >= 1:
                 sp = self._get_frozen_prompt(key, channel=msg.channel)
                 self._schedule_background(self._auto_title(session, sp))
 

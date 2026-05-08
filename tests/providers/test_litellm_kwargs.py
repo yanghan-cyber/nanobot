@@ -1147,3 +1147,79 @@ def test_deepseek_no_backfill_when_reasoning_effort_none_string() -> None:
     )
     assistant = kw["messages"][1]
     assert "reasoning_content" not in assistant
+
+
+# ---------------------------------------------------------------------------
+# Custom provider proxying to DeepSeek — backfill must still work
+# ---------------------------------------------------------------------------
+
+
+def test_custom_provider_deepseek_model_backfills_reasoning_content() -> None:
+    """When a custom provider proxies to deepseek-v4-flash, backfill must
+    still trigger based on model name, not spec.name.
+
+    Regression: custom provider (spec.name='custom') with deepseek model
+    previously skipped backfill because implicit_deepseek_thinking checked
+    spec.name == 'deepseek'.
+    """
+    spec = find_by_name("custom")
+    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI"):
+        p = OpenAICompatProvider(api_key="k", default_model="deepseek-v4-flash", spec=spec)
+    messages = [
+        {"role": "user", "content": "pick an avatar"},
+        {"role": "assistant", "content": "", "tool_calls": [
+            {"id": "tc1", "type": "function", "function": {"name": "bash", "arguments": "{}"}}
+        ]},
+        {"role": "tool", "tool_call_id": "tc1", "content": "ok"},
+        {"role": "user", "content": "continue"},
+    ]
+    kw = p._build_kwargs(
+        messages=list(messages), tools=None, model="deepseek-v4-flash",
+        max_tokens=1024, temperature=0.7,
+        reasoning_effort="high", tool_choice=None,
+    )
+    assistant = kw["messages"][1]
+    assert "reasoning_content" in assistant, (
+        "custom provider with deepseek model must backfill reasoning_content"
+    )
+    assert assistant["reasoning_content"] == ""
+
+
+def test_custom_provider_deepseek_model_backfills_without_reasoning_effort() -> None:
+    """DeepSeek-V4 reasons natively; custom provider must backfill even when
+    reasoning_effort is not explicitly set (implicit thinking)."""
+    spec = find_by_name("custom")
+    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI"):
+        p = OpenAICompatProvider(api_key="k", default_model="deepseek-v4-flash", spec=spec)
+    messages = [
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": "", "tool_calls": [
+            {"id": "tc1", "type": "function", "function": {"name": "bash", "arguments": "{}"}}
+        ]},
+        {"role": "tool", "tool_call_id": "tc1", "content": "result"},
+        {"role": "user", "content": "thanks"},
+    ]
+    kw = p._build_kwargs(
+        messages=list(messages), tools=None, model="deepseek-v4-flash",
+        max_tokens=1024, temperature=0.7,
+        reasoning_effort=None, tool_choice=None,
+    )
+    assert kw["messages"][1]["reasoning_content"] == ""
+
+
+def test_custom_provider_non_deepseek_model_no_backfill() -> None:
+    """Custom provider with a non-deepseek model must NOT backfill."""
+    spec = find_by_name("custom")
+    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI"):
+        p = OpenAICompatProvider(api_key="k", default_model="glm-5.1", spec=spec)
+    messages = [
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": "ok"},
+        {"role": "user", "content": "continue"},
+    ]
+    kw = p._build_kwargs(
+        messages=list(messages), tools=None, model="glm-5.1",
+        max_tokens=1024, temperature=0.7,
+        reasoning_effort=None, tool_choice=None,
+    )
+    assert "reasoning_content" not in kw["messages"][1]

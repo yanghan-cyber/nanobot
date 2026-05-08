@@ -117,6 +117,13 @@ class SubagentManager:
         self._running_tasks: dict[str, asyncio.Task[None]] = {}
         self._task_statuses: dict[str, SubagentStatus] = {}
         self._session_tasks: dict[str, set[str]] = {}  # session_key -> {task_id, ...}
+        self._background_tasks: list[asyncio.Task] = []
+
+    def _schedule_background(self, coro) -> None:
+        """Schedule a coroutine as a tracked background task."""
+        task = asyncio.create_task(coro)
+        self._background_tasks.append(task)
+        task.add_done_callback(self._background_tasks.remove)
 
     def set_provider(self, provider: LLMProvider, model: str) -> None:
         self.provider = provider
@@ -297,6 +304,11 @@ class SubagentManager:
                 )
                 db.end_session(subagent_db_id, result.stop_reason or "completed")
 
+                # Generate title for subagent session
+                self._schedule_background(self._generate_subagent_title(
+                    subagent_db_id, task, result.final_content
+                ))
+
             if result.stop_reason == "tool_error":
                 status.tool_events = list(result.tool_events)
                 await self._announce_result(
@@ -413,6 +425,56 @@ class SubagentManager:
             lines.append("Failure:")
             lines.append(f"- {result.error}")
         return "\n".join(lines) or (result.error or "Error: subagent execution failed.")
+
+    async def _generate_subagent_title(
+        self, session_id: str, task: str, result: str | None
+    ) -> None:
+        """Generate a title for subagent session based on task and result."""
+        try:
+            from nanobot.session.title import clean_title
+
+            # Build conversation summary from task and result
+            # Simplify tool calls and results like session_search does
+            summary_parts = [f"Task: {task[:800]}"]
+            if result:
+                # Truncate result but keep meaningful content
+                result_preview = result[:800]
+                if len(result) > 800:
+                    result_preview += "\n...[truncated]"
+                summary_parts.append(f"Result: {result_preview}")
+
+            conversation_summary = "\n\n".join(summary_parts)
+
+            system_prompt = (
+                "You are generating a short title for a subagent session. "
+                "The title should capture the main task or topic. "
+                "Return only the title text, 3-7 words, no quotes, no punctuation."
+            )
+            user_prompt = (
+                "Generate a concise title for this subagent session:\n\n"
+                f"{conversation_summary}"
+            )
+
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ]
+
+            response = await self.provider.chat_with_retry(
+                model=self.model,
+                messages=messages,
+                max_tokens=32,
+                temperature=0.2,
+            )
+
+            if response and response.content:
+                title = clean_title(response.content)
+                if title:
+                    db = self.sessions._db
+                    db.set_session_title(session_id, title)
+                    logger.debug("Generated subagent title: {}", title)
+        except Exception:
+            logger.debug("Failed to generate subagent title", exc_info=True)
 
     def _build_subagent_prompt(self, skills_loader: SkillsLoader | None = None) -> str:
         """Build a focused system prompt for the subagent."""
