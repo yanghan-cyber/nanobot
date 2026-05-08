@@ -31,6 +31,7 @@ from nanobot.agent.tools.ask import (
 from nanobot.agent.tools.cron import CronTool
 from nanobot.agent.tools.file_state import FileStateStore, bind_file_states, reset_file_states
 from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
+from nanobot.agent.tools.image_generation import ImageGenerationTool
 from nanobot.agent.tools.message import MessageTool
 from nanobot.agent.tools.notebook import NotebookEditTool
 from nanobot.agent.tools.registry import ToolRegistry
@@ -48,9 +49,11 @@ from nanobot.config.schema import AgentDefaults
 from nanobot.providers.base import LLMProvider
 from nanobot.providers.factory import ProviderSnapshot
 from nanobot.session.manager import Session, SessionManager
+from nanobot.utils.artifacts import generated_image_paths_from_messages
 from nanobot.utils.document import extract_documents
 from nanobot.utils.helpers import image_placeholder_text
 from nanobot.utils.helpers import truncate_text as truncate_text_fn
+from nanobot.utils.image_generation_intent import image_generation_prompt
 from nanobot.utils.progress_events import (
     build_tool_event_finish_payloads,
     build_tool_event_start_payload,
@@ -64,6 +67,7 @@ if TYPE_CHECKING:
     from nanobot.config.schema import (
         BashToolConfig,
         ChannelsConfig,
+        ProviderConfig,
         ToolsConfig,
         WebToolsConfig,
     )
@@ -228,6 +232,8 @@ class AgentLoop:
         unified_session: bool = False,
         disabled_skills: list[str] | None = None,
         tools_config: ToolsConfig | None = None,
+        image_generation_provider_config: ProviderConfig | None = None,
+        image_generation_provider_configs: dict[str, ProviderConfig] | None = None,
         provider_snapshot_loader: Callable[[], ProviderSnapshot] | None = None,
         provider_signature: tuple[object, ...] | None = None,
         subagent_max_iterations: int | None = None,
@@ -270,6 +276,13 @@ class AgentLoop:
         self.search_scope = defaults.searchScope
         self.web_config = web_config or WebToolsConfig()
         self.bash_config = bash_config or BashToolConfig()
+        self.tools_config = _tc
+        self._image_generation_provider_configs = dict(image_generation_provider_configs or {})
+        if (
+            image_generation_provider_config is not None
+            and "openrouter" not in self._image_generation_provider_configs
+        ):
+            self._image_generation_provider_configs["openrouter"] = image_generation_provider_config
         self.cron_service = cron_service
         self.restrict_to_workspace = restrict_to_workspace
         self._start_time = time.time()
@@ -431,6 +444,14 @@ class AgentLoop:
                     config=self.web_config.fetch,
                     proxy=self.web_config.proxy,
                     user_agent=self.web_config.user_agent,
+                )
+            )
+        if self.tools_config.image_generation.enabled:
+            self.tools.register(
+                ImageGenerationTool(
+                    workspace=self.workspace,
+                    config=self.tools_config.image_generation,
+                    provider_configs=self._image_generation_provider_configs,
                 )
             )
         self.tools.register(MessageTool(send_callback=self.bus.publish_outbound, workspace=self.workspace))
@@ -1022,6 +1043,7 @@ class AgentLoop:
             await self.consolidator.maybe_consolidate_by_tokens(
                 session,
                 session_summary=pending,
+                replay_max_messages=self._max_messages,
             )
             # Persist subagent follow-ups into durable history BEFORE prompt
             # assembly. ContextBuilder merges adjacent same-role messages for
@@ -1095,7 +1117,12 @@ class AgentLoop:
                     input_tokens=self._last_usage.get("prompt_tokens", 0),
                     output_tokens=self._last_usage.get("completion_tokens", 0),
                 )
-            self._schedule_background(self.consolidator.maybe_consolidate_by_tokens(session))
+            self._schedule_background(
+                self.consolidator.maybe_consolidate_by_tokens(
+                    session,
+                    replay_max_messages=self._max_messages,
+                )
+            )
             options = ask_user_options_from_messages(all_msgs) if stop_reason == "ask_user" else []
             content, buttons = ask_user_outbound(
                 final_content or "Background task completed.",
@@ -1152,6 +1179,7 @@ class AgentLoop:
         await self.consolidator.maybe_consolidate_by_tokens(
             session,
             session_summary=pending,
+            replay_max_messages=self._max_messages,
         )
 
         self._set_tool_context(
@@ -1173,13 +1201,13 @@ class AgentLoop:
                 self.context.build_system_prompt(channel=msg.channel),
                 history,
                 pending_ask_id,
-                msg.content,
+                image_generation_prompt(msg.content, msg.metadata),
             )
         else:
             frozen_sp = self._get_frozen_prompt(key, channel=msg.channel)
             initial_messages = self.context.build_messages(
                 history=history,
-                current_message=msg.content,
+                current_message=image_generation_prompt(msg.content, msg.metadata),
                 session_summary=pending,
                 media=msg.media if msg.media else None,
                 channel=msg.channel,
@@ -1263,6 +1291,11 @@ class AgentLoop:
 
         # Skip the already-persisted user message when saving the turn
         save_skip = 1 + len(history) + (1 if user_persisted_early else 0)
+        generated_media = generated_image_paths_from_messages(all_msgs[save_skip:])
+        if generated_media and all_msgs and all_msgs[-1].get("role") == "assistant":
+            existing_media = all_msgs[-1].get("media")
+            media = existing_media if isinstance(existing_media, list) else []
+            all_msgs[-1]["media"] = list(dict.fromkeys([*media, *generated_media]))
         self._save_turn(session, all_msgs, save_skip)
         session.enforce_file_cap(on_archive=self.context.memory.raw_archive)
         self._clear_pending_user_turn(session)
@@ -1274,7 +1307,12 @@ class AgentLoop:
                 input_tokens=self._last_usage.get("prompt_tokens", 0),
                 output_tokens=self._last_usage.get("completion_tokens", 0),
             )
-        self._schedule_background(self.consolidator.maybe_consolidate_by_tokens(session))
+        self._schedule_background(
+            self.consolidator.maybe_consolidate_by_tokens(
+                session,
+                replay_max_messages=self._max_messages,
+            )
+        )
 
         # Auto-title generation for new sessions
         if (
@@ -1315,6 +1353,7 @@ class AgentLoop:
             channel=msg.channel,
             chat_id=msg.chat_id,
             content=final_content,
+            media=generated_media,
             metadata=meta,
             buttons=buttons,
         )
