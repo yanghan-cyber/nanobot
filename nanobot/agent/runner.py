@@ -8,7 +8,6 @@ import os
 from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
-from collections.abc import Callable
 from typing import Any
 
 from loguru import logger
@@ -82,7 +81,6 @@ class AgentRunSpec:
     retry_wait_callback: Any | None = None
     checkpoint_callback: Any | None = None
     injection_callback: Any | None = None
-    has_running_tasks: Callable[[], bool] | None = None
     llm_timeout_s: float | None = None
 
 
@@ -163,14 +161,7 @@ class AgentRunner:
         caller continues the iteration loop.  Otherwise return (False, cycles).
         """
         if injection_cycles >= _MAX_INJECTION_CYCLES:
-            if spec.has_running_tasks and spec.has_running_tasks():
-                logger.info(
-                    "Injection cycle limit reached ({}/{}) but tasks still running; resetting counter",
-                    injection_cycles, _MAX_INJECTION_CYCLES,
-                )
-                injection_cycles = 0
-            else:
-                return False, injection_cycles
+            return False, injection_cycles
         injections = await self._drain_injections(spec)
         if not injections:
             return False, injection_cycles
