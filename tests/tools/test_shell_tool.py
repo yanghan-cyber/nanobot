@@ -286,8 +286,8 @@ class TestShellBgTool:
     # -- session isolation --------------------------------------------------
 
     @pytest.mark.asyncio
-    async def test_list_filters_by_session(self):
-        """list() only returns tasks matching current session_key."""
+    async def test_list_shows_all_sessions(self):
+        """list() returns tasks from all sessions."""
         from nanobot.agent.tools.shell import ShellBgTool, _bg_meta
 
         tool = ShellBgTool()
@@ -305,21 +305,16 @@ class TestShellBgTool:
         }
         try:
             tool.set_context(session_key="feishu:chat_111")
-            result_a = await tool.execute(action="list")
-            assert "bash_bg_s1" in result_a
-            assert "bash_bg_s2" not in result_a
-
-            tool.set_context(session_key="feishu:chat_222")
-            result_b = await tool.execute(action="list")
-            assert "bash_bg_s2" in result_b
-            assert "bash_bg_s1" not in result_b
+            result = await tool.execute(action="list")
+            assert "bash_bg_s1" in result
+            assert "bash_bg_s2" in result
         finally:
             _bg_meta.clear()
             _bg_meta.update(saved)
 
     @pytest.mark.asyncio
-    async def test_output_rejects_other_session(self):
-        """output() returns 'not found' for tasks from another session."""
+    async def test_output_accessible_cross_session(self):
+        """output() is accessible for tasks from other sessions."""
         from nanobot.agent.tools.shell import ShellBgTool, _bg_meta
 
         tool = ShellBgTool()
@@ -334,14 +329,14 @@ class TestShellBgTool:
         }
         try:
             result = await tool.execute(action="output", bash_bg_id="bash_bg_other")
-            assert "not found" in result.lower()
+            assert "not found" not in result.lower()
         finally:
             _bg_meta.clear()
             _bg_meta.update(saved)
 
     @pytest.mark.asyncio
-    async def test_kill_rejects_other_session(self):
-        """kill() returns 'not found' for tasks from another session."""
+    async def test_kill_accessible_cross_session(self):
+        """kill() is accessible for tasks from other sessions."""
         from nanobot.agent.tools.shell import ShellBgTool, _bg_meta
 
         tool = ShellBgTool()
@@ -356,7 +351,7 @@ class TestShellBgTool:
         }
         try:
             result = await tool.execute(action="kill", bash_bg_id="bash_bg_other_kill")
-            assert "not found" in result.lower()
+            assert "not found" not in result.lower()
         finally:
             _bg_meta.clear()
             _bg_meta.update(saved)

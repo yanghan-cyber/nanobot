@@ -886,15 +886,12 @@ class ShellBgTool(Tool):
     # -- list ---------------------------------------------------------------
 
     async def _list(self) -> str:
-        current_session = self._session_key.get()
         async with _bg_lock:
             if not _bg_meta:
                 return "No background tasks running."
 
             rows = []
             for bg_id, m in _bg_meta.items():
-                if m.get("session_key", "") != current_session:
-                    continue
                 rows.append(
                     f"  {bg_id}  status={m['status']}  command={m['command']}  "
                     f"purpose={m.get('purpose', '')}"
@@ -903,28 +900,23 @@ class ShellBgTool(Tool):
                 return "No background tasks running."
             return "\n".join(rows)
 
-    # -- session-aware lookup -----------------------------------------------
+    # -- lookup ---------------------------------------------------------------
 
     def _get_bg_meta(self, bg_id: str) -> dict | None:
-        """Return bg meta if it exists and belongs to the current session."""
-        meta = _bg_meta.get(bg_id)
-        if meta and meta.get("session_key", "") == self._session_key.get():
-            return meta
-        return None
+        """Return bg meta if it exists."""
+        return _bg_meta.get(bg_id)
 
     # -- status summary (sync, for /status) ---------------------------------
 
-    def get_status_summary(self, session_key: str | None = None) -> str:
-        """Return a one-shot summary of active bg tasks for the given session.
+    def get_status_summary(self) -> str:
+        """Return a one-shot summary of all active bg tasks.
 
         Sync and lock-free: reads ``_bg_meta`` directly (asyncio single-threaded).
-        Falls back to the ContextVar session key if *session_key* is None.
         """
-        current_session = session_key or self._session_key.get()
         active = {
             bg_id: m
             for bg_id, m in _bg_meta.items()
-            if m.get("session_key") == current_session and m.get("status") == "running"
+            if m.get("status") == "running"
         }
         if not active:
             return ""

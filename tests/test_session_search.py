@@ -93,7 +93,7 @@ class TestSessionSearchRecent:
         provider.chat_with_retry = AsyncMock(
             return_value=MagicMock(content="Summary")
         )
-        tool = SessionSearchTool(db=db, provider=provider, model="m", search_scope="all")
+        tool = SessionSearchTool(db=db, provider=provider, model="m")
         db.create_session("s1", session_key="feishu:chat123", source="main")
         db.append_message("s1", role="user", content="test message")
         result = await tool.execute()

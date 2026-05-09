@@ -17,6 +17,7 @@ from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTo
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.tools.search import GlobTool, GrepTool
 from nanobot.agent.tools.shell import BashTool, ShellBgTool
+from nanobot.agent.tools.session_search import SessionSearchTool
 from nanobot.agent.tools.skill import LoadSkillTool
 from nanobot.agent.tools.web import WebFetchTool, WebSearchTool
 from nanobot.bus.events import InboundMessage
@@ -255,6 +256,12 @@ class SubagentManager:
                 disabled_skills=self.disabled_skills,
             )
             tools.register(LoadSkillTool(skills_loader=skills_loader))
+            if self.sessions:
+                tools.register(
+                    SessionSearchTool(
+                        db=self.sessions._db, provider=self.provider, model=self.model,
+                    )
+                )
             system_prompt = self._build_subagent_prompt(skills_loader=skills_loader)
             messages: list[dict[str, Any]] = [
                 {"role": "system", "content": system_prompt},
@@ -521,24 +528,14 @@ class SubagentManager:
 
     def get_running_count(self) -> int:
         """Return the number of currently running subagents."""
-        return len(self._running_tasks)
+        return sum(1 for t in self._running_tasks.values() if not t.done())
 
-    def get_running_count_by_session(self, session_key: str) -> int:
-        """Return the number of currently running subagents for a session."""
-        tids = self._session_tasks.get(session_key, set())
-        return sum(
-            1 for tid in tids
-            if tid in self._running_tasks and not self._running_tasks[tid].done()
-        )
-
-    def get_session_status(self, session_key: str) -> str:
-        """Return a human-readable summary of running subagents for a session."""
-        tids = self._session_tasks.get(session_key, set())
+    def get_status(self) -> str:
+        """Return a human-readable summary of all running subagents."""
         running = [
             self._task_statuses[tid]
-            for tid in tids
+            for tid in self._running_tasks
             if tid in self._task_statuses
-            and tid in self._running_tasks
             and not self._running_tasks[tid].done()
         ]
         if not running:

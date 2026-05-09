@@ -158,7 +158,7 @@ class TestCurrentSessionExclusion:
 
 
 class TestSearchScope:
-    """Feature #6: search_scope filters by session_key."""
+    """DB-level session_key filtering in search_messages and list_recent_sessions."""
 
     def test_search_filters_by_session_key(self, db: SessionDB):
         _seed_session(db, "s1", [

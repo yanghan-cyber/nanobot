@@ -152,20 +152,20 @@ async def cmd_status(ctx: CommandContext) -> OutboundMessage:
             api_key = getattr(search_cfg, "api_key", "") or None
             usage = await fetch_search_usage(provider=provider, api_key=api_key)
             search_usage_text = usage.format()
-    active_tasks = loop._active_tasks.get(ctx.key, [])
-    task_count = sum(1 for t in active_tasks if not t.done())
+    all_active = [t for tasks in loop._active_tasks.values() for t in tasks]
+    task_count = sum(1 for t in all_active if not t.done())
     with suppress(Exception):
-        task_count += loop.subagents.get_running_count_by_session(ctx.key)
+        task_count += loop.subagents.get_running_count()
 
     # Collect bg task and subagent status for display
     bg_status_text: str | None = None
     with suppress(Exception):
         shell_bg = loop.tools.get("shell_bg")
         if shell_bg:
-            bg_status_text = shell_bg.get_status_summary(session_key=ctx.key) or None
+            bg_status_text = shell_bg.get_status_summary() or None
     subagent_status_text: str | None = None
     with suppress(Exception):
-        subagent_status_text = loop.subagents.get_session_status(ctx.key) or None
+        subagent_status_text = loop.subagents.get_status() or None
 
     return OutboundMessage(
         channel=ctx.msg.channel,

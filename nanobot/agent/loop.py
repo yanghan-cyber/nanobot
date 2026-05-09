@@ -273,7 +273,6 @@ class AgentLoop:
             else defaults.tool_hint_max_length
         )
         self.title_regenerate_interval = defaults.titleRegenerateInterval
-        self.search_scope = defaults.searchScope
         self.web_config = web_config or WebToolsConfig()
         self.bash_config = bash_config or BashToolConfig()
         self.tools_config = _tc
@@ -461,11 +460,9 @@ class AgentLoop:
             self.tools.register(
                 CronTool(self.cron_service, default_timezone=self.context.timezone or "UTC")
             )
-        search_scope = self.search_scope
         self.tools.register(
             SessionSearchTool(
                 db=self.sessions._db, provider=self.provider, model=self.model,
-                search_scope=search_scope,
             )
         )
 
@@ -976,7 +973,9 @@ class AgentLoop:
             "role": "user",
             "content": (
                 "Based on the conversation above, generate a short descriptive "
-                "title (3-7 words). Return ONLY the title, no quotes, "
+                "title (3-7 words) that captures the MAIN TOPIC of the most "
+                "recent discussion. Prioritize what the user is talking about "
+                "NOW over earlier topics. Return ONLY the title, no quotes, "
                 "no explanation, no punctuation at the end."
             ),
         })
@@ -1318,11 +1317,8 @@ class AgentLoop:
             )
         )
 
-        # Auto-title generation for new sessions
-        if (
-            session.db_id
-            and not self.sessions._db.get_session_title(session.db_id)
-        ):
+        # Auto-title generation (new sessions + periodic regeneration)
+        if session.db_id:
             user_msg_count = sum(
                 1
                 for m in session.messages[: session.last_db_flush_idx]
