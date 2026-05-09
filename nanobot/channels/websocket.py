@@ -179,7 +179,7 @@ def _parse_request_path(path_with_query: str) -> tuple[str, dict[str, list[str]]
     """Parse normalized path and query parameters in one pass."""
     parsed = urlparse("ws://x" + path_with_query)
     path = _strip_trailing_slash(parsed.path or "/")
-    return path, parse_qs(parsed.query)
+    return path, parse_qs(parsed.query, keep_blank_values=True)
 
 
 def _normalize_http_path(path_with_query: str) -> str:
@@ -197,30 +197,32 @@ def _query_first(query: dict[str, list[str]], key: str) -> str | None:
     return values[0] if values else None
 
 
-def _try_parse_json_object(raw: str) -> dict[str, Any] | None:
-    """Parse raw text as a JSON object; return None for non-JSON, arrays, or empty."""
-    text = raw.strip()
-    if not text.startswith("{"):
+def _mask_secret_hint(secret: str | None) -> str | None:
+    if not secret:
         return None
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError:
-        return None
-    return data if isinstance(data, dict) else None
+    if len(secret) <= 8:
+        return "••••"
+    return f"{secret[:4]}••••{secret[-4:]}"
 
 
-def _extract_legacy_text(raw: str, data: dict[str, Any] | None = None) -> str | None:
-    """Extract text from a legacy frame.  *data* is the pre-parsed dict when available."""
+def _parse_inbound_payload(raw: str) -> str | None:
+    """Parse a client frame into text; return None for empty or unrecognized content."""
     text = raw.strip()
     if not text:
         return None
-    if data is None:
-        return text
-    for key in ("content", "text", "message"):
-        value = data.get(key)
-        if isinstance(value, str) and value.strip():
-            return value
-    return None
+    if text.startswith("{"):
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            return text
+        if isinstance(data, dict):
+            for key in ("content", "text", "message"):
+                value = data.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value
+            return None
+        return None
+    return text
 
 
 # Accept UUIDs and short scoped keys like "unified:default". Keeps the capability
@@ -237,21 +239,21 @@ def _parse_envelope(raw: str) -> dict[str, Any] | None:
 
     A frame qualifies when it parses as a JSON object with a string ``type`` field.
     Legacy frames (plain text, or ``{"content": ...}`` without ``type``) return None;
-    callers should fall back to :func:`_extract_legacy_text` for those.
+    callers should fall back to :func:`_parse_inbound_payload` for those.
     """
-    data = _try_parse_json_object(raw)
-    if data is None:
+    text = raw.strip()
+    if not text.startswith("{"):
+        return None
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict):
         return None
     t = data.get("type")
     if not isinstance(t, str):
         return None
     return data
-
-
-def _parse_inbound_payload(raw: str) -> str | None:
-    """Backward-compatible legacy frame parser (used by tests)."""
-    data = _try_parse_json_object(raw)
-    return _extract_legacy_text(raw, data=data)
 
 
 # Per-message media limits. The server-side guard is a touch looser than the
@@ -584,6 +586,9 @@ class WebSocketChannel(BaseChannel):
         if got == "/api/settings/update":
             return self._handle_settings_update(request)
 
+        if got == "/api/settings/provider/update":
+            return self._handle_settings_provider_update(request)
+
         m = re.match(r"^/api/sessions/([^/]+)/messages$", got)
         if m:
             return self._handle_session_messages(request, m.group(1), query)
@@ -708,6 +713,21 @@ class WebSocketChannel(BaseChannel):
         if defaults.provider != "auto":
             spec = find_by_name(defaults.provider)
             selected_provider = spec.name if spec else provider_name
+        providers = []
+        for spec in PROVIDERS:
+            provider_config = getattr(config.providers, spec.name, None)
+            if provider_config is None or spec.is_oauth or spec.is_local:
+                continue
+            providers.append(
+                {
+                    "name": spec.name,
+                    "label": spec.label,
+                    "configured": bool(provider_config.api_key),
+                    "api_key_hint": _mask_secret_hint(provider_config.api_key),
+                    "api_base": provider_config.api_base,
+                    "default_api_base": spec.default_api_base or None,
+                }
+            )
         return {
             "agent": {
                 "model": defaults.model,
@@ -715,12 +735,7 @@ class WebSocketChannel(BaseChannel):
                 "resolved_provider": provider_name,
                 "has_api_key": bool(provider and provider.api_key),
             },
-            "providers": [
-                {"name": "auto", "label": "Auto"}
-            ] + [
-                {"name": spec.name, "label": spec.label}
-                for spec in PROVIDERS
-            ],
+            "providers": providers,
             "runtime": {
                 "config_path": str(get_config_path().expanduser()),
             },
@@ -759,16 +774,66 @@ class WebSocketChannel(BaseChannel):
 
         provider = _query_first(query, "provider")
         if provider is not None:
-            provider = provider.strip() or "auto"
-            if provider != "auto" and find_by_name(provider) is None:
+            provider = provider.strip()
+            if not provider:
+                return _http_error(400, "provider is required")
+            if find_by_name(provider) is None:
                 return _http_error(400, "unknown provider")
+            provider_config = getattr(config.providers, provider, None)
+            if provider_config is None or not provider_config.api_key:
+                return _http_error(400, "provider is not configured")
             if defaults.provider != provider:
                 defaults.provider = provider
                 changed = True
 
         if changed:
             save_config(config)
-        return _http_json_response(self._settings_payload(requires_restart=changed))
+        # LLM provider/model changes are hot-reloaded by AgentLoop before each
+        # new turn via the provider snapshot loader, so a restart is unnecessary.
+        return _http_json_response(self._settings_payload(requires_restart=False))
+
+    def _handle_settings_provider_update(self, request: WsRequest) -> Response:
+        if not self._check_api_token(request):
+            return _http_error(401, "Unauthorized")
+        from nanobot.config.loader import load_config, save_config
+        from nanobot.providers.registry import find_by_name
+
+        query = _parse_query(request.path)
+        provider_name = (_query_first(query, "provider") or "").strip()
+        if not provider_name:
+            return _http_error(400, "provider is required")
+        spec = find_by_name(provider_name)
+        if spec is None or spec.is_oauth or spec.is_local:
+            return _http_error(400, "unknown provider")
+
+        config = load_config()
+        provider_config = getattr(config.providers, spec.name, None)
+        if provider_config is None:
+            return _http_error(400, "unknown provider")
+
+        changed = False
+        if "api_key" in query or "apiKey" in query:
+            api_key = _query_first(query, "api_key")
+            if api_key is None:
+                api_key = _query_first(query, "apiKey")
+            api_key = (api_key or "").strip() or None
+            if provider_config.api_key != api_key:
+                provider_config.api_key = api_key
+                changed = True
+
+        if "api_base" in query or "apiBase" in query:
+            api_base = _query_first(query, "api_base")
+            if api_base is None:
+                api_base = _query_first(query, "apiBase")
+            api_base = (api_base or "").strip() or None
+            if provider_config.api_base != api_base:
+                provider_config.api_base = api_base
+                changed = True
+
+        if changed:
+            save_config(config)
+        # API key/base changes are picked up by the next provider snapshot refresh.
+        return _http_json_response(self._settings_payload(requires_restart=False))
 
     @staticmethod
     def _is_webui_session_key(key: str) -> bool:
@@ -1082,12 +1147,12 @@ class WebSocketChannel(BaseChannel):
                         self.logger.warning("ignoring non-utf8 binary frame")
                         continue
 
-                parsed = _try_parse_json_object(raw)
-                if parsed is not None and isinstance(parsed.get("type"), str):
+                parsed = _parse_envelope(raw)
+                if parsed is not None:
                     await self._dispatch_envelope(connection, client_id, parsed)
                     continue
 
-                content = _extract_legacy_text(raw, data=parsed)
+                content = _parse_inbound_payload(raw)
                 if content is None:
                     continue
                 await self._handle_message(
