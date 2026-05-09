@@ -835,6 +835,8 @@ class ShellBgTool(Tool):
     def __init__(self, bg_ttl_minutes: int = 120, bg_max_entries: int = 128):
         self._ttl_minutes = bg_ttl_minutes
         self._max_entries = bg_max_entries
+        self._origin_channel: ContextVar[str] = ContextVar("shell_bg_origin_channel", default="cli")
+        self._origin_chat_id: ContextVar[str] = ContextVar("shell_bg_origin_chat_id", default="direct")
 
     def set_context(
         self,
@@ -843,6 +845,9 @@ class ShellBgTool(Tool):
         chat_id: str = "direct",
         session_key: str = "cli:direct",
     ) -> None:
+        self._bus = bus
+        self._origin_channel.set(channel)
+        self._origin_chat_id.set(chat_id)
         self._session_key.set(session_key)
 
     @property

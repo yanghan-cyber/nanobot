@@ -175,16 +175,12 @@ class TestFetchSearchUsageRouting:
     async def test_tavily_success(self):
         mock_response = MagicMock()
         mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "account": {
-                "current_plan": "Researcher",
-                "plan_usage": 142,
-                "plan_limit": 1000,
-                "search_usage": 120,
-                "extract_usage": 15,
-                "crawl_usage": 7,
-            },
-        }
+        mock_response.text = (
+            '{"account": {"current_plan": "Researcher", "plan_usage": 142,'
+            ' "plan_limit": 1000, "search_usage": 120, "extract_usage": 15,'
+            ' "crawl_usage": 7}}'
+        )
+        mock_response.headers.get = MagicMock(return_value=None)
         mock_response.raise_for_status = MagicMock()
 
         mock_client = AsyncMock()
@@ -238,6 +234,66 @@ class TestFetchSearchUsageRouting:
 
         assert info.supported is True
         assert info.error is not None
+
+    @pytest.mark.asyncio
+    async def test_tavily_waf_challenge(self):
+        """AWS WAF intercepts with 202 + empty body + x-amzn-waf-action header."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.text = ""
+        mock_response.headers.get = MagicMock(return_value="CAPTCHA")
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.get = AsyncMock(return_value=mock_response)
+
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            info = await fetch_search_usage("tavily", api_key="test-key")
+
+        assert info.supported is True
+        assert info.error == "blocked by WAF (CAPTCHA)"
+
+    @pytest.mark.asyncio
+    async def test_tavily_empty_response_no_waf(self):
+        """Empty body without WAF header returns generic empty response error."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.text = ""
+        mock_response.headers.get = MagicMock(return_value=None)
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.get = AsyncMock(return_value=mock_response)
+
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            info = await fetch_search_usage("tavily", api_key="test-key")
+
+        assert info.supported is True
+        assert info.error == "empty response"
+
+    @pytest.mark.asyncio
+    async def test_tavily_malformed_json(self):
+        """Non-JSON response body returns malformed response error."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.text = "<html>502 Bad Gateway</html>"
+        mock_response.headers.get = MagicMock(return_value=None)
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.get = AsyncMock(return_value=mock_response)
+
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            info = await fetch_search_usage("tavily", api_key="test-key")
+
+        assert info.supported is True
+        assert info.error == "API returned malformed response"
 
     @pytest.mark.asyncio
     async def test_provider_name_case_insensitive(self):

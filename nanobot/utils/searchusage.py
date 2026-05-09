@@ -110,16 +110,17 @@ async def _fetch_tavily_usage(api_key: str | None) -> SearchUsageInfo:
                 headers={"Authorization": f"Bearer {key}"},
             )
             r.raise_for_status()
+            body_text = r.text
+            waf_action = r.headers.get("x-amzn-waf-action")
         # AWS WAF may intercept with a 202 challenge (empty body)
-        waf_action = r.headers.get("x-amzn-waf-action")
-        if not r.text.strip():
+        if not body_text.strip():
             reason = f"blocked by WAF ({waf_action})" if waf_action else "empty response"
             return SearchUsageInfo(
                 provider="tavily",
                 supported=True,
                 error=reason,
             )
-        data: dict[str, Any] = r.json()
+        data = json.loads(body_text)
         return _parse_tavily_usage(data)
     except httpx.HTTPStatusError as e:
         return SearchUsageInfo(

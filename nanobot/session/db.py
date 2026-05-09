@@ -37,9 +37,9 @@ CREATE TABLE IF NOT EXISTS sessions (
     terminated_at         REAL,
     termination_reason    TEXT,
     message_count         INTEGER DEFAULT 0,
-    input_tokens          INTEGER DEFAULT 0,
-    output_tokens         INTEGER DEFAULT 0,
-    cache_read_tokens     INTEGER DEFAULT 0
+    input_tokens          INTEGER DEFAULT 0,  -- last turn, not cumulative
+    output_tokens         INTEGER DEFAULT 0,  -- last turn, not cumulative
+    cache_read_tokens     INTEGER DEFAULT 0   -- last turn, not cumulative
 );
 
 CREATE TABLE IF NOT EXISTS messages (
