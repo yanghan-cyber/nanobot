@@ -409,6 +409,12 @@ class LLMProvider(ABC):
                 curr_content = msg.get("content") or ""
                 if isinstance(prev_content, str) and isinstance(curr_content, str):
                     prev["content"] = (prev_content + "\n\n" + curr_content).strip()
+                    # Preserve reasoning_content from the most recent message
+                    # to avoid DeepSeek "reasoning_content must be passed back" errors.
+                    if msg.get("reasoning_content"):
+                        prev["reasoning_content"] = msg["reasoning_content"]
+                    if msg.get("thinking_blocks"):
+                        prev["thinking_blocks"] = msg["thinking_blocks"]
                 else:
                     merged[-1] = dict(msg)
             else:
