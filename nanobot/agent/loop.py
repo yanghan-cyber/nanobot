@@ -734,7 +734,7 @@ class AgentLoop:
         session: Session,
         pending_ask_id: str | None,
         *,
-        pending_summary: Any = None,
+        pending_summary: str | None = None,
     ) -> bool:
         """Persist the triggering user message before the turn starts.
 
