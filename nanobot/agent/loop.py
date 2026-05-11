@@ -764,14 +764,18 @@ class AgentLoop:
         session: Session,
         history: list[dict[str, Any]],
         pending_ask_id: str | None,
-        pending_summary: Any,
+        pending_summary: str | None,
         *,
         system_prompt: str | None = None,
     ) -> list[dict[str, Any]]:
         """Build the initial message list for the LLM turn."""
         if pending_ask_id:
+            system_prompt = self.context.build_system_prompt(
+                channel=msg.channel,
+                session_summary=pending_summary,
+            )
             return ask_user_tool_result_messages(
-                self.context.build_system_prompt(channel=msg.channel),
+                system_prompt,
                 history,
                 pending_ask_id,
                 image_generation_prompt(msg.content, msg.metadata),
@@ -779,12 +783,12 @@ class AgentLoop:
         return self.context.build_messages(
             history=history,
             current_message=image_generation_prompt(msg.content, msg.metadata),
-            session_summary=pending_summary,
             media=msg.media if msg.media else None,
             channel=msg.channel,
             chat_id=self._runtime_chat_id(msg),
             system_prompt=system_prompt,
             sender_id=msg.sender_id,
+            session_summary=pending_summary,
         )
 
     async def _dispatch_command_inline(
@@ -1266,7 +1270,6 @@ class AgentLoop:
 
         await self.consolidator.maybe_consolidate_by_tokens(
             session,
-            session_summary=pending,
             replay_max_messages=self._max_messages,
         )
         is_subagent = msg.sender_id == "subagent"
@@ -1289,10 +1292,10 @@ class AgentLoop:
             current_message="" if is_subagent else msg.content,
             channel=channel,
             chat_id=chat_id,
-            session_summary=pending,
             current_role=current_role,
             system_prompt=frozen_sp,
             sender_id=msg.sender_id,
+            session_summary=pending,
         )
         final_content, _, all_msgs, stop_reason, _ = await self._run_agent_loop(
             messages, session=session, channel=channel, chat_id=chat_id,
@@ -1502,7 +1505,6 @@ class AgentLoop:
     async def _state_build(self, ctx: TurnContext) -> str:
         await self.consolidator.maybe_consolidate_by_tokens(
             ctx.session,
-            session_summary=ctx.pending_summary,
             replay_max_messages=self._max_messages,
         )
         self._set_tool_context(
