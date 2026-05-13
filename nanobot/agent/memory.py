@@ -35,6 +35,35 @@ if TYPE_CHECKING:
 
 
 # ---------------------------------------------------------------------------
+# Staging metadata stripping
+# ---------------------------------------------------------------------------
+
+# Regex: matches  "- [YYYY-MM-DD] content | seen:N | age:Nd"  or  "- [YYYY-MM-DD] content | seen:N"
+_STAGING_ENTRY_RE = re.compile(
+    r"^(\s*- )\[\d{4}-\d{2}-\d{2}\]\s+(.+?)(?:\s*\|\s*seen:\d+(?:\s*\|\s*age:\d+d?)?)?\s*$",
+    re.MULTILINE,
+)
+
+
+def _strip_staging_metadata(text: str) -> str:
+    """Strip date, seen, age metadata from staging entries.
+
+    - [2026-05-13] content | seen:2 | age:1d  →  - content
+    - [2026-05-13] content | seen:2             →  - content
+    - plain entry                              →  - plain entry (unchanged)
+    """
+    lines = text.split("\n")
+    result = []
+    for line in lines:
+        m = _STAGING_ENTRY_RE.match(line)
+        if m:
+            result.append(f"{m.group(1)}{m.group(2)}")
+        else:
+            result.append(line)
+    return "\n".join(result)
+
+
+# ---------------------------------------------------------------------------
 # MemoryStore — pure file I/O layer
 # ---------------------------------------------------------------------------
 
@@ -57,12 +86,14 @@ class MemoryStore:
         self.legacy_history_file = self.memory_dir / "HISTORY.md"
         self.soul_file = workspace / "SOUL.md"
         self.user_file = workspace / "USER.md"
+        self.staging_file = self.memory_dir / "staging.md"
         self._cursor_file = self.memory_dir / ".cursor"
         self._dream_cursor_file = self.memory_dir / ".dream_cursor"
         self._corruption_logged = False  # rate-limit non-int cursor warning
         self._oversize_logged = False  # rate-limit oversized-entry warning
         self._git = GitStore(workspace, tracked_files=[
-            "SOUL.md", "USER.md", "memory/MEMORY.md", "memory/.dream_cursor",
+            "SOUL.md", "USER.md", "memory/MEMORY.md", "memory/staging.md",
+            "memory/.dream_cursor",
         ])
         self._maybe_migrate_legacy_history()
 
@@ -223,6 +254,27 @@ class MemoryStore:
 
     def write_user(self, content: str) -> None:
         self.user_file.write_text(content, encoding="utf-8")
+
+    # -- staging.md ----------------------------------------------------------
+
+    def read_staging(self) -> str:
+        return self.read_file(self.staging_file)
+
+    def write_staging(self, content: str) -> None:
+        self.staging_file.write_text(content, encoding="utf-8")
+
+    def get_staging_context(self) -> str:
+        """Read staging.md, strip metadata, return context for injection.
+
+        Returns empty string if file is empty/missing.
+        """
+        raw = self.read_staging()
+        if not raw.strip():
+            return ""
+        stripped = _strip_staging_metadata(raw)
+        if not stripped.strip():
+            return ""
+        return f"# Short-term Memory\n\n{stripped}"
 
     # -- context injection (used by context.py) ------------------------------
 
