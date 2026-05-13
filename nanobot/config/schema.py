@@ -53,6 +53,32 @@ class DreamConfig(Base):
     # to the `← Nd` suffix or you want deterministic, git-independent prompts.
     annotate_line_ages: bool = True
 
+    staging_promotion_threshold: int = Field(
+        default=3,
+        ge=1,
+        validation_alias=AliasChoices("stagingPromotionThreshold"),
+        serialization_alias="stagingPromotionThreshold",
+    )
+    audit_cron: str = Field(
+        default="0 3 * * *",
+        validation_alias=AliasChoices("auditCron"),
+        serialization_alias="auditCron",
+    )
+    audit_model_override: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("auditModelOverride", "auditModel", "audit_model_override"),
+    )
+    audit_max_iterations: int = Field(
+        default=15,
+        ge=1,
+        validation_alias=AliasChoices("auditMaxIterations"),
+        serialization_alias="auditMaxIterations",
+    )
+
+    def build_audit_schedule(self, timezone: str) -> CronSchedule:
+        """Build the audit schedule from the configured cron expression."""
+        return CronSchedule(kind="cron", expr=self.audit_cron, tz=timezone)
+
     def build_schedule(self, timezone: str) -> CronSchedule:
         """Build the runtime schedule, preferring the legacy cron override if present."""
         if self.cron:
