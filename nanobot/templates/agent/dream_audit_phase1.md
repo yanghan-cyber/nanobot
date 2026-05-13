@@ -33,6 +33,8 @@ Suggest structural improvements:
 ### 4. Compression
 Identify verbose entries that can be shortened without losing information.
 
+**Staging metadata**: When editing staging entries, preserve the `| seen:N | age:Nd` metadata suffix unless intentionally resetting the counter.
+
 ## Output Format
 
 ```

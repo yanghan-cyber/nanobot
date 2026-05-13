@@ -1087,11 +1087,7 @@ class Dream:
                 "\n\n## Existing Skills\n"
                 + "\n".join(f"- {s}" for s in existing_skills)
             )
-        phase2_prompt = (
-            f"## Analysis Result\n{analysis}\n\n"
-            f"## Current staging.md\n{current_staging}\n\n"
-            f"{file_context}{skills_section}"
-        )
+        phase2_prompt = f"## Analysis Result\n{analysis}\n\n{file_context}{skills_section}"
 
         tools = self._tools
         skill_creator_path = BUILTIN_SKILLS_DIR / "skill-creator" / "SKILL.md"
