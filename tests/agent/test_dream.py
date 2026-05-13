@@ -255,8 +255,8 @@ class TestDreamRun:
         await dream.run()
 
         system_msg = mock_provider.chat_with_retry.call_args.kwargs["messages"][0]["content"]
-        # The template renders with stale_threshold_days=14 → LLM must see "N>14"
-        assert "N>14" in system_msg
+        # The template renders with stale_threshold_days=14 → LLM must see "older than 14 days"
+        assert "older than 14 days" in system_msg
 
 
 class TestDreamPromptCaps:

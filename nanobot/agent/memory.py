@@ -848,6 +848,7 @@ class Dream:
     _MEMORY_FILE_MAX_CHARS = 32_000
     _SOUL_FILE_MAX_CHARS = 16_000
     _USER_FILE_MAX_CHARS = 16_000
+    _STAGING_FILE_MAX_CHARS = 16_000
     _HISTORY_ENTRY_PREVIEW_MAX_CHARS = 4_000
 
     def __init__(
@@ -983,6 +984,14 @@ class Dream:
             result += "\n"
         return result
 
+    def _get_promotion_threshold(self) -> int:
+        """Get the staging promotion seen threshold."""
+        from nanobot.config.loader import load_config
+        try:
+            return load_config().agents.defaults.dream.staging_promotion_threshold
+        except Exception:
+            return 3
+
     async def run(self) -> bool:
         """Process unprocessed history entries. Returns True if work was done."""
         from nanobot.agent.skills import BUILTIN_SKILLS_DIR
@@ -1023,9 +1032,13 @@ class Dream:
         current_user = truncate_text(
             self.store.read_user() or "(empty)", self._USER_FILE_MAX_CHARS,
         )
+        current_staging = truncate_text(
+            self.store.read_staging() or "(empty)", self._STAGING_FILE_MAX_CHARS,
+        )
 
         file_context = (
             f"## Current Date\n{current_date}\n\n"
+            f"## Current staging.md ({len(current_staging)} chars)\n{current_staging}\n\n"
             f"## Current MEMORY.md ({len(current_memory)} chars)\n{current_memory}\n\n"
             f"## Current SOUL.md ({len(current_soul)} chars)\n{current_soul}\n\n"
             f"## Current USER.md ({len(current_user)} chars)\n{current_user}"
@@ -1046,6 +1059,7 @@ class Dream:
                             "agent/dream_phase1.md",
                             strip=True,
                             stale_threshold_days=_STALE_THRESHOLD_DAYS,
+                            staging_promotion_threshold=self._get_promotion_threshold(),
                         ),
                     },
                     {"role": "user", "content": phase1_prompt},
