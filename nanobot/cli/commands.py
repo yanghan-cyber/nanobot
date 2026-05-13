@@ -543,6 +543,8 @@ def serve(
     sync_workspace_templates(runtime_config.workspace_path)
     bus = MessageBus()
     session_manager = SessionManager(runtime_config.workspace_path)
+    if runtime_config.agents.defaults.auto_prune:
+        session_manager.prune(runtime_config.agents.defaults.retention_days)
     try:
         agent_loop = AgentLoop.from_config(
             runtime_config, bus,
@@ -642,6 +644,9 @@ def _run_gateway(
         console.print(f"[red]Error: {exc}[/red]")
         raise typer.Exit(1) from exc
     session_manager = SessionManager(config.workspace_path)
+
+    if config.agents.defaults.auto_prune:
+        session_manager.prune(config.agents.defaults.retention_days)
 
     # Preserve existing single-workspace installs, but keep custom workspaces clean.
     if is_default_workspace(config.workspace_path):

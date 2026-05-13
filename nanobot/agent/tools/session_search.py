@@ -316,7 +316,7 @@ class SessionSearchTool(Tool):
         rows = self._db.search_messages(
             query,
             role_filter=parsed_roles,
-            exclude_sources=None,
+            exclude_sources=["subagent"],
             limit=limit * 10,
         )
 

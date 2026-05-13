@@ -341,7 +341,6 @@ class AgentLoop:
             tool_hint_max_length if tool_hint_max_length is not None
             else defaults.tool_hint_max_length
         )
-        self.title_regenerate_interval = defaults.titleRegenerateInterval
         self.web_config = web_config or WebToolsConfig()
         self.bash_config = bash_config or BashToolConfig()
         self.tools_config = _tc
@@ -1182,17 +1181,13 @@ class AgentLoop:
         self._mcp_stacks.clear()
 
     async def _auto_title(self, session: Session, system_prompt: str) -> None:
-        """Auto-generate a session title by reusing conversation context for cache hits."""
+        """Auto-generate a session title (first time only)."""
         if not session.db_id:
             return
         db = self.sessions._db
-        existing_title = db.get_session_title(session.db_id)
-        if existing_title:
-            # Check time gap — regenerate if conversation resumed after long idle
-            session_row = db.get_session(session.db_id)
-            last_active = session_row.get("last_active_at") if session_row else None
-            if last_active is not None and time.time() - last_active < self.title_regenerate_interval:
-                return  # Title still fresh
+        # Guard: title already set — the caller pre-checks, but race-safe
+        if db.get_session_title(session.db_id):
+            return
 
         history = session.get_history(
             max_messages=self._max_messages,
@@ -1595,7 +1590,7 @@ class AgentLoop:
                 replay_max_messages=self._max_messages,
             )
         )
-        # Auto-title generation (new sessions + periodic regeneration)
+        # Auto-title generation (first time only)
         if ctx.session.db_id:
             user_msg_count = sum(
                 1

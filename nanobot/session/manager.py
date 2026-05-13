@@ -543,6 +543,32 @@ class SessionManager:
         """Remove a session from the in-memory cache."""
         self._cache.pop(key, None)
 
+    def prune(self, retention_days: int = 90) -> int:
+        """Prune terminated sessions older than *retention_days*.
+
+        Removes sessions from SQLite, deletes JSONL files, and invalidates
+        the in-memory cache.  Active sessions are never pruned.
+        Returns the number of pruned sessions.
+        """
+        pruned = self._db.prune_terminated_sessions(retention_days)
+        if not pruned:
+            return 0
+        deleted_files = 0
+        for _sid, session_key in pruned:
+            self.invalidate(session_key)
+            path = self._get_session_path(session_key)
+            if path.exists():
+                try:
+                    path.unlink()
+                    deleted_files += 1
+                except OSError as e:
+                    logger.warning("Failed to delete pruned session file {}: {}", path, e)
+        logger.info(
+            "Pruned {} sessions ({} JSONL files) older than {} days",
+            len(pruned), deleted_files, retention_days,
+        )
+        return len(pruned)
+
     def delete_session(self, key: str) -> bool:
         """Remove a session from disk and the in-memory cache.
 

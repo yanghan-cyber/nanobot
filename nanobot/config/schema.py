@@ -120,12 +120,17 @@ class AgentDefaults(Base):
         serialization_alias="consolidationRatio",
     )  # Consolidation target ratio (0.5 = 50% of budget retained after compression)
     dream: DreamConfig = Field(default_factory=DreamConfig)
-    titleRegenerateInterval: int = Field(
-        default=1800,
-        ge=0,
-        validation_alias=AliasChoices("titleRegenerateInterval"),
-        serialization_alias="titleRegenerateInterval",
-    )
+    auto_prune: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("autoPrune"),
+        serialization_alias="autoPrune",
+    )  # Auto-prune terminated sessions older than retention_days on startup
+    retention_days: int = Field(
+        default=90,
+        ge=1,
+        validation_alias=AliasChoices("retentionDays"),
+        serialization_alias="retentionDays",
+    )  # Session pruning retention threshold in days
 
 
 class AgentsConfig(Base):

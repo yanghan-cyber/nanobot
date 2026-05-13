@@ -702,3 +702,54 @@ class SessionDB:
         except sqlite3.OperationalError:
             return []
         return [dict(row) for row in cursor.fetchall()]
+
+    def prune_terminated_sessions(
+        self, older_than_days: int = 90
+    ) -> list[tuple[str, str]]:
+        """Delete terminated sessions older than *older_than_days*.
+
+        Active sessions are never pruned.  Returns a list of
+        ``(session_id, session_key)`` tuples **only for keys that have no
+        remaining active session**, so callers can safely delete secondary
+        storage (e.g. JSONL files).
+        """
+        cutoff = time.time() - older_than_days * 86400
+        with self._lock:
+            cursor = self._conn.execute(
+                "SELECT id, session_key FROM sessions "
+                "WHERE terminated_at IS NOT NULL AND terminated_at < ?",
+                (cutoff,),
+            )
+            rows = cursor.fetchall()
+            if not rows:
+                return []
+            sids = [row[0] for row in rows]
+            keys = set(row[1] for row in rows)
+            self._conn.execute(
+                "DELETE FROM tool_invocations WHERE session_id IN ({})".format(
+                    ",".join("?" * len(sids))
+                ),
+                sids,
+            )
+            self._conn.execute(
+                "DELETE FROM messages WHERE session_id IN ({})".format(
+                    ",".join("?" * len(sids))
+                ),
+                sids,
+            )
+            self._conn.execute(
+                "DELETE FROM sessions WHERE id IN ({})".format(
+                    ",".join("?" * len(sids))
+                ),
+                sids,
+            )
+            self._conn.commit()
+        # Only return keys with no surviving active session
+        safe_to_delete = []
+        for sid, session_key in rows:
+            if session_key not in keys:
+                continue
+            if self.get_active_session(session_key) is None:
+                safe_to_delete.append((sid, session_key))
+            keys.discard(session_key)
+        return safe_to_delete
