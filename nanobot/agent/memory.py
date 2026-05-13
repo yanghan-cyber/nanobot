@@ -860,6 +860,7 @@ class Dream:
         max_iterations: int = 10,
         max_tool_result_chars: int = 16_000,
         annotate_line_ages: bool = True,
+        staging_promotion_threshold: int = 3,
     ):
         self.store = store
         self.provider = provider
@@ -871,6 +872,7 @@ class Dream:
         # Default True keeps the #3212 behavior; set False to feed MEMORY.md raw
         # (e.g. if a specific LLM reacts poorly to the `← Nd` suffix).
         self.annotate_line_ages = annotate_line_ages
+        self.staging_promotion_threshold = staging_promotion_threshold
         self._runner = AgentRunner(provider)
         self._tools = self._build_tools()
 
@@ -991,12 +993,7 @@ class Dream:
         return result
 
     def _get_promotion_threshold(self) -> int:
-        """Get the staging promotion seen threshold."""
-        from nanobot.config.loader import load_config
-        try:
-            return load_config().agents.defaults.dream.staging_promotion_threshold
-        except Exception:
-            return 3
+        return self.staging_promotion_threshold
 
     async def run(self) -> bool:
         """Process unprocessed history entries. Returns True if work was done."""
