@@ -902,10 +902,16 @@ class Dream:
         ))
         tools.register(EditFileTool(workspace=workspace, allowed_dir=workspace, file_states=file_states))
         # write_file resolves relative paths from workspace root, but can only
-        # write under skills/ so the prompt can safely use skills/<name>/SKILL.md.
+        # write under skills/ and memory/ so the prompt can safely create/update
+        # skills and staging.md.
         skills_dir = workspace / "skills"
         skills_dir.mkdir(parents=True, exist_ok=True)
-        tools.register(WriteFileTool(workspace=workspace, allowed_dir=skills_dir, file_states=file_states))
+        tools.register(WriteFileTool(
+            workspace=workspace,
+            allowed_dir=skills_dir,
+            extra_allowed_dirs=[self.store.memory_dir],
+            file_states=file_states,
+        ))
         return tools
 
     # -- skill listing --------------------------------------------------------
@@ -1081,7 +1087,11 @@ class Dream:
                 "\n\n## Existing Skills\n"
                 + "\n".join(f"- {s}" for s in existing_skills)
             )
-        phase2_prompt = f"## Analysis Result\n{analysis}\n\n{file_context}{skills_section}"
+        phase2_prompt = (
+            f"## Analysis Result\n{analysis}\n\n"
+            f"## Current staging.md\n{current_staging}\n\n"
+            f"{file_context}{skills_section}"
+        )
 
         tools = self._tools
         skill_creator_path = BUILTIN_SKILLS_DIR / "skill-creator" / "SKILL.md"

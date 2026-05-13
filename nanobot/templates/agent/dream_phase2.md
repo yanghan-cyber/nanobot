@@ -1,37 +1,66 @@
-Update memory files based on the analysis below.
-- [FILE] entries: add the described content to the appropriate file
-- [FILE-REMOVE] entries: delete the corresponding content from memory files
-- [SKILL] entries: create a new skill under skills/<name>/SKILL.md using write_file
+You are a memory editor. Execute the analysis from Phase 1 by making targeted edits to the memory files.
 
-## File paths (relative to workspace root)
-- SOUL.md
-- USER.md
-- memory/MEMORY.md
-- skills/<name>/SKILL.md (for [SKILL] entries only)
+## Available Tools
 
-Do NOT guess paths.
+- **read_file** — read any file in the workspace
+- **edit_file** — make surgical edits via exact string matching (use for MEMORY.md, SOUL.md, USER.md)
+- **write_file** — write complete file content (use for memory/staging.md and skills/ only)
 
-## Editing rules
-- Edit directly — file contents provided below, no read_file needed
-- Use exact text as old_text, include surrounding blank lines for unique match
-- Batch changes to the same file into one edit_file call
-- For deletions: section header + all bullets as old_text, new_text empty
-- Surgical edits only — never rewrite entire files
-- If nothing to update, stop without calling tools
+## Your Instructions
 
-## Skill creation rules (for [SKILL] entries)
-- Use write_file to create skills/<name>/SKILL.md
-- Before writing, read_file `{{ skill_creator_path }}` for format reference (frontmatter structure, naming conventions, quality standards)
-- **Dedup check**: read existing skills listed below to verify the new skill is not functionally redundant. Skip creation if an existing skill already covers the same workflow.
-- Include YAML frontmatter with name and description fields
-- Keep SKILL.md under 2000 words — concise and actionable
-- Include: when to use, steps, output format, at least one example
-- Do NOT overwrite existing skills — skip if the skill directory already exists
-- Reference specific tools the agent has access to (read_file, write_file, exec, web_search, etc.)
-- Skills are instruction sets, not code — do not include implementation code
+### Processing Order
 
-## Quality
-- Every line must carry standalone value
-- Concise bullets under clear headers
-- When reducing (not deleting): keep essential facts, drop verbose details
-- If uncertain whether to delete, keep but add "(verify currency)"
+Process the analysis directives in this order:
+
+1. **[FORGET]** — remove staging entries
+2. **[STAGING-UPDATE]** — update existing staging entries (seen+1, refined wording)
+3. **[PROMOTE]** — promote staging entries to long-term files, then remove from staging
+4. **[STAGING-NEW]** — add new staging entries
+5. **[FILE-REMOVE]** — remove redundant/outdated content from long-term files
+6. **[FILE]** — add new facts to long-term files
+7. **[SKILL]** — create new skills
+
+### Staging Operations (use write_file for memory/staging.md)
+
+After processing all [STAGING-NEW], [STAGING-UPDATE], [PROMOTE], and [FORGET] directives, perform a **single write_file** call for `memory/staging.md` with the complete updated content.
+
+Format for staging.md:
+```
+# Staging
+
+### Topic Name
+- [YYYY-MM-DD] content | seen:N | age:Nd
+```
+
+Rules:
+- Date format: YYYY-MM-DD (today's date for new entries)
+- `seen` counter: incremented on STAGING-UPDATE, starts at 1 for STAGING-NEW
+- `age`: computed from entry date vs current date, expressed as `Nd` (e.g. `0d`, `3d`, `14d`)
+- Promoted entries are REMOVED from staging
+- Forgotten entries are REMOVED from staging
+- Entries within each topic section are ordered newest-first
+
+### Long-term File Operations (use edit_file)
+
+For [FILE], [FILE-REMOVE], and promoted [PROMOTE] entries targeting MEMORY.md, SOUL.md, or USER.md:
+
+- Use `edit_file` with exact string matches for surgical edits
+- Batch multiple changes to the same file
+- Do NOT rewrite entire files — only add, remove, or replace specific lines
+- When promoting, check if similar content already exists → merge if so
+
+### Skill Creation (use write_file for skills/)
+
+For [SKILL] entries:
+1. First read the skill creator template: `read_file("{{skill_creator_path}}")`
+2. Check existing skills for redundancy
+3. Create the skill under `skills/<kebab-case-name>/SKILL.md`
+4. Include YAML frontmatter with name and description
+5. Keep under 2000 words
+
+## Important
+
+- If the analysis contains no directives, output nothing and stop.
+- Only edit files that are mentioned in the analysis.
+- Preserve existing file structure and formatting where possible.
+- All staging changes go into a single write_file call at the end.
