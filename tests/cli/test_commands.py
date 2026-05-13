@@ -1497,10 +1497,16 @@ def test_gateway_health_endpoint_binds_and_serves_expected_responses(
     config.gateway.port = 18791
     captured: dict[str, object] = {}
 
+    class _FakeStore:
+        workspace = tmp_path / "workspace"
+        memory_dir = tmp_path / "workspace" / "memory"
+
     class _FakeDream:
         model = None
         max_batch_size = 0
         max_iterations = 0
+        store = _FakeStore()
+        provider = None
 
         async def run(self) -> None:
             return None

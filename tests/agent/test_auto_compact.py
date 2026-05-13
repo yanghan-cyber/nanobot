@@ -1127,8 +1127,8 @@ class TestSummaryPersistence:
         assert summary is not None
         assert "User said hello." in summary
         assert "Previous conversation summary" in summary
-        # _last_summary persists in metadata for restart survival.
-        assert "_last_summary" in reloaded.metadata
+        # _last_summary consumed and removed from metadata.
+        assert "_last_summary" not in reloaded.metadata
         await loop.close_mcp()
 
     @pytest.mark.asyncio
@@ -1152,14 +1152,15 @@ class TestSummaryPersistence:
         loop.sessions.invalidate("cli:test")
         reloaded = loop.sessions.get_or_create("cli:test")
 
-        # Every call returns the summary from metadata (no _consumed_keys gate)
+        # First call returns the summary from metadata (cold path)
         _, summary = loop.auto_compact.prepare_session(reloaded, "cli:test")
         assert summary is not None
+        assert "Summary." in summary
+        # _last_summary consumed and removed from metadata.
+        assert "_last_summary" not in reloaded.metadata
+        # Second call returns None (summary already consumed).
         _, summary2 = loop.auto_compact.prepare_session(reloaded, "cli:test")
-        assert summary2 is not None
-        assert "Summary." in summary2
-        # _last_summary persists in metadata for restart survival.
-        assert "_last_summary" in reloaded.metadata
+        assert summary2 is None
         await loop.close_mcp()
 
     @pytest.mark.asyncio
@@ -1187,8 +1188,8 @@ class TestSummaryPersistence:
         # In-memory path is taken (no restart)
         _, summary = loop.auto_compact.prepare_session(reloaded, "cli:test")
         assert summary is not None
-        # _last_summary persists in metadata for restart survival.
-        assert "_last_summary" in reloaded.metadata
+        # _last_summary cleaned from metadata after consumption.
+        assert "_last_summary" not in reloaded.metadata
         await loop.close_mcp()
 
     @pytest.mark.asyncio
