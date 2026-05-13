@@ -109,3 +109,57 @@ def test_get_staging_context_plain_entry_no_pipes(store: MemoryStore):
 
 def test_staging_file_attribute(store: MemoryStore):
     assert store.staging_file == store.memory_dir / "staging.md"
+
+
+# ---------------------------------------------------------------------------
+# ContextBuilder staging injection into system prompt (Task 3)
+# ---------------------------------------------------------------------------
+
+from unittest.mock import patch
+
+from nanobot.agent.context import ContextBuilder
+
+
+@pytest.fixture
+def ctx_builder(tmp_path: Path) -> ContextBuilder:
+    return ContextBuilder(tmp_path)
+
+
+def test_staging_injected_between_memory_and_skills(ctx_builder: ContextBuilder, tmp_path: Path):
+    """Staging context appears between Memory and Skills sections in system prompt."""
+    # Set up MEMORY.md
+    (tmp_path / "memory").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "memory" / "MEMORY.md").write_text("# Test Memory\n- fact", encoding="utf-8")
+    # Set up staging.md
+    (tmp_path / "memory" / "staging.md").write_text(
+        "# Staging\n\n### Topic\n- [2026-05-13] item | seen:1 | age:0d\n", encoding="utf-8",
+    )
+    # Set up a minimal skill so skills section exists
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir(parents=True, exist_ok=True)
+    (skills_dir / "test-skill").mkdir(exist_ok=True)
+    (skills_dir / "test-skill" / "SKILL.md").write_text(
+        "---\nname: test-skill\ndescription: A test skill\n---\nContent\n", encoding="utf-8",
+    )
+
+    prompt = ctx_builder.build_system_prompt(skill_names=[])
+
+    mem_pos = prompt.find("# Memory")
+    staging_pos = prompt.find("# Short-term Memory")
+    skills_pos = prompt.find("Available Skills")
+
+    assert mem_pos > 0, "Memory section missing"
+    assert staging_pos > 0, "Short-term Memory section missing"
+    assert staging_pos > mem_pos, "Staging must appear after Memory"
+    if skills_pos > 0:
+        assert staging_pos < skills_pos, "Staging must appear before Skills"
+
+
+def test_no_staging_section_when_staging_empty(ctx_builder: ContextBuilder, tmp_path: Path):
+    """No Short-term Memory section when staging.md is empty."""
+    (tmp_path / "memory").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "memory" / "MEMORY.md").write_text("# Test Memory\n- fact", encoding="utf-8")
+    # staging.md does not exist
+
+    prompt = ctx_builder.build_system_prompt(skill_names=[])
+    assert "# Short-term Memory" not in prompt
