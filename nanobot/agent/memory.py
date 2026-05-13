@@ -1160,3 +1160,152 @@ class Dream:
                 logger.info("Dream commit: {}", sha)
 
         return True
+
+
+# ---------------------------------------------------------------------------
+# DreamAudit — daily memory audit processor
+# ---------------------------------------------------------------------------
+
+
+class DreamAudit:
+    """Two-phase daily audit: analyze all memory files, then make targeted edits.
+
+    Responsible for cross-file dedup, dead entry cleanup, structure
+    reorganization, and compression.
+    """
+
+    _MEMORY_FILE_MAX_CHARS = 32_000
+    _SOUL_FILE_MAX_CHARS = 16_000
+    _USER_FILE_MAX_CHARS = 16_000
+    _STAGING_FILE_MAX_CHARS = 16_000
+
+    def __init__(
+        self,
+        store: MemoryStore,
+        provider: LLMProvider,
+        model: str,
+        max_iterations: int = 15,
+        max_tool_result_chars: int = 16_000,
+    ):
+        self.store = store
+        self.provider = provider
+        self.model = model
+        self.max_iterations = max_iterations
+        self.max_tool_result_chars = max_tool_result_chars
+        self._runner = AgentRunner(provider)
+        self._tools = self._build_tools()
+
+    def set_provider(self, provider: LLMProvider, model: str) -> None:
+        self.provider = provider
+        self.model = model
+        self._runner.provider = provider
+
+    def _build_tools(self) -> ToolRegistry:
+        """Read + Edit tools only — audit does targeted edits, no full rewrites."""
+        from nanobot.agent.tools.file_state import FileStates
+        from nanobot.agent.tools.filesystem import EditFileTool, ReadFileTool
+
+        tools = ToolRegistry()
+        workspace = self.store.workspace
+        file_states = FileStates()
+        tools.register(ReadFileTool(
+            workspace=workspace,
+            allowed_dir=workspace,
+            file_states=file_states,
+        ))
+        tools.register(EditFileTool(
+            workspace=workspace,
+            allowed_dir=workspace,
+            file_states=file_states,
+        ))
+        return tools
+
+    async def run(self) -> bool:
+        """Run the two-phase audit. Returns True if changes were made."""
+        current_date = datetime.now().strftime("%Y-%m-%d")
+
+        raw_memory = self.store.read_memory() or "(empty)"
+        raw_soul = self.store.read_soul() or "(empty)"
+        raw_user = self.store.read_user() or "(empty)"
+        raw_staging = self.store.read_staging() or "(empty)"
+
+        # Skip if all files are empty
+        if all(v == "(empty)" for v in [raw_memory, raw_soul, raw_user, raw_staging]):
+            return False
+
+        current_memory = truncate_text(raw_memory, self._MEMORY_FILE_MAX_CHARS)
+        current_soul = truncate_text(raw_soul, self._SOUL_FILE_MAX_CHARS)
+        current_user = truncate_text(raw_user, self._USER_FILE_MAX_CHARS)
+        current_staging = truncate_text(raw_staging, self._STAGING_FILE_MAX_CHARS)
+
+        file_context = (
+            f"## Current Date\n{current_date}\n\n"
+            f"## Current MEMORY.md ({len(current_memory)} chars)\n{current_memory}\n\n"
+            f"## Current SOUL.md ({len(current_soul)} chars)\n{current_soul}\n\n"
+            f"## Current USER.md ({len(current_user)} chars)\n{current_user}\n\n"
+            f"## Current staging.md ({len(current_staging)} chars)\n{current_staging}"
+        )
+
+        # Phase 1: Analyze
+        try:
+            phase1_response = await self.provider.chat_with_retry(
+                model=self.model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": render_template(
+                            "agent/dream_audit_phase1.md",
+                            strip=True,
+                        ),
+                    },
+                    {"role": "user", "content": file_context},
+                ],
+                tools=None,
+                tool_choice=None,
+            )
+            analysis = phase1_response.content or ""
+            if not analysis.strip():
+                return False
+        except Exception:
+            logger.exception("DreamAudit Phase 1 failed")
+            return False
+
+        # Phase 2: Execute
+        messages: list[dict[str, Any]] = [
+            {
+                "role": "system",
+                "content": render_template(
+                    "agent/dream_audit_phase2.md",
+                    strip=True,
+                ),
+            },
+            {"role": "user", "content": f"## Analysis Result\n{analysis}\n\n{file_context}"},
+        ]
+
+        try:
+            result = await self._runner.run(AgentRunSpec(
+                initial_messages=messages,
+                tools=self._tools,
+                model=self.model,
+                max_iterations=self.max_iterations,
+                max_tool_result_chars=self.max_tool_result_chars,
+                fail_on_tool_error=False,
+            ))
+        except Exception:
+            logger.exception("DreamAudit Phase 2 failed")
+            return False
+
+        changelog: list[str] = []
+        if result and result.tool_events:
+            for event in result.tool_events:
+                if event["status"] == "ok":
+                    changelog.append(f"{event['name']}: {event['detail']}")
+
+        if changelog and self.store.git.is_initialized():
+            summary = f"dream-audit: {current_date}, {len(changelog)} change(s)"
+            commit_msg = f"{summary}\n\n{analysis.strip()}"
+            sha = self.store.git.auto_commit(commit_msg)
+            if sha:
+                logger.info("DreamAudit commit: {}", sha)
+
+        return bool(changelog)
