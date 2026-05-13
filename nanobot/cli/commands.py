@@ -730,6 +730,14 @@ def _run_gateway(
                 logger.exception("Dream cron job failed")
             return None
 
+        if job.name == "dream_audit":
+            try:
+                await agent.dream_audit.run()
+                logger.info("DreamAudit cron job completed")
+            except Exception:
+                logger.exception("DreamAudit cron job failed")
+            return None
+
         from nanobot.utils.evaluator import evaluate_response
 
         reminder_note = (
@@ -948,6 +956,23 @@ def _run_gateway(
         payload=CronPayload(kind="system_event"),
     ))
     console.print(f"[green]✓[/green] Dream: {dream_cfg.describe_schedule()}")
+
+    # Register DreamAudit system job (daily memory audit)
+    from nanobot.agent.memory import DreamAudit
+    dream_audit = DreamAudit(
+        store=agent.dream.store,
+        provider=agent.dream.provider,
+        model=dream_cfg.audit_model_override or agent.dream.model,
+        max_iterations=dream_cfg.audit_max_iterations,
+    )
+    agent.dream_audit = dream_audit
+    cron.register_system_job(CronJob(
+        id="dream_audit",
+        name="dream_audit",
+        schedule=dream_cfg.build_audit_schedule(config.agents.defaults.timezone),
+        payload=CronPayload(kind="system_event"),
+    ))
+    console.print(f"[green]✓[/green] DreamAudit: {dream_cfg.audit_cron}")
 
     async def _open_browser_when_ready() -> None:
         """Wait for the gateway to bind, then point the user's browser at the webui."""
