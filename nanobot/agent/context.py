@@ -96,7 +96,7 @@ class ContextBuilder:
     @staticmethod
     def _build_runtime_context(
         channel: str | None, chat_id: str | None, timezone: str | None = None,
-        session_summary: str | None = None, sender_id: str | None = None,
+        sender_id: str | None = None,
     ) -> str:
         """Build untrusted runtime metadata block for injection before the user message."""
         lines = [f"Message Time: {current_time_str(timezone)}"]
@@ -104,8 +104,6 @@ class ContextBuilder:
             lines += [f"Channel: {channel}", f"Chat ID: {chat_id}"]
         if sender_id:
             lines += [f"Sender ID: {sender_id}"]
-        if session_summary:
-            lines += ["", "[Resumed Session]", session_summary]
         return ContextBuilder._RUNTIME_CONTEXT_TAG + "\n" + "\n".join(lines) + "\n" + ContextBuilder._RUNTIME_CONTEXT_END
 
     @staticmethod
@@ -157,7 +155,7 @@ class ContextBuilder:
         sender_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """Build the complete message list for an LLM call."""
-        runtime_ctx = self._build_runtime_context(channel, chat_id, self.timezone, session_summary=session_summary, sender_id=sender_id)
+        runtime_ctx = self._build_runtime_context(channel, chat_id, self.timezone, sender_id=sender_id)
         user_content = self._build_user_content(current_message, media)
 
         # Append runtime context after user content.
@@ -165,7 +163,12 @@ class ContextBuilder:
             merged = f"{user_content}\n\n{runtime_ctx}"
         else:
             merged = user_content + [{"type": "text", "text": runtime_ctx}]
-        effective_prompt = system_prompt if system_prompt is not None else self.build_system_prompt(skill_names, channel=channel)
+        if system_prompt is not None:
+            effective_prompt = system_prompt
+            if session_summary:
+                effective_prompt = f"{effective_prompt}\n\n[Archived Context Summary]\n\n{session_summary}"
+        else:
+            effective_prompt = self.build_system_prompt(skill_names, channel=channel, session_summary=session_summary)
         messages = [
             {"role": "system", "content": effective_prompt},
             *history,

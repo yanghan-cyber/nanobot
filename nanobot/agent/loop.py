@@ -732,8 +732,6 @@ class AgentLoop:
         msg: InboundMessage,
         session: Session,
         pending_ask_id: str | None,
-        *,
-        pending_summary: str | None = None,
     ) -> bool:
         """Persist the triggering user message before the turn starts.
 
@@ -746,7 +744,6 @@ class AgentLoop:
             if has_text:
                 runtime_ctx = self.context._build_runtime_context(
                     msg.channel, msg.chat_id, self.context.timezone,
-                    session_summary=pending_summary,
                 )
                 text = f"{msg.content}\n\n{runtime_ctx}"
             else:
@@ -1526,7 +1523,6 @@ class AgentLoop:
         )
         ctx.user_persisted_early = self._persist_user_message_early(
             ctx.msg, ctx.session, pending_ask_id,
-            pending_summary=ctx.pending_summary,
         )
 
         if ctx.on_progress is None:

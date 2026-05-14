@@ -134,10 +134,11 @@ class AutoCompact:
         # Hot path: summary from in-memory dict (process hasn't restarted).
         entry = self._summaries.pop(key, None)
         if entry:
-            session.metadata.pop("_last_summary", None)
             return session, self._format_summary(entry[0], entry[1])
         # Cold path: summary persisted in session metadata (process restarted).
-        meta = session.metadata.pop("_last_summary", None)
+        # Non-destructive read — summary stays in metadata so it survives restarts
+        # and is re-injected each turn (same as upstream behavior).
+        meta = session.metadata.get("_last_summary")
         if isinstance(meta, dict):
             return session, self._format_summary(meta["text"], datetime.fromisoformat(meta["last_active"]))
         return session, None
